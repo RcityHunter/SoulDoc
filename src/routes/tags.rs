@@ -12,6 +12,7 @@ use std::sync::Arc;
 use crate::{
     error::ApiError,
     models::tag::{Tag, DocumentTag, CreateTagRequest, UpdateTagRequest, TagDocumentRequest},
+    services::database::record_id_to_string,
     services::{auth::AuthService, tags::{TagService, TagStatistics}},
 };
 
@@ -55,7 +56,7 @@ pub struct TagDocumentsResponse {
 
 pub async fn get_tags(
     Query(query): Query<TagQuery>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<TagListResponse>, ApiError> {
     let tag_service = &app_state.tag_service;
@@ -98,7 +99,7 @@ pub async fn get_tags(
 }
 
 pub async fn create_tag(
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
     Json(request): Json<CreateTagRequest>,
 ) -> Result<Json<Tag>, ApiError> {
@@ -121,7 +122,7 @@ pub async fn create_tag(
 
 pub async fn get_tag(
     Path(tag_id): Path<String>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<Tag>, ApiError> {
     let tag_service = &app_state.tag_service;
@@ -131,7 +132,7 @@ pub async fn get_tag(
     // 检查读取权限
     if let Some(space_id) = &tag.space_id {
         auth_service
-            .check_permission(&user_id, "docs.read", Some(&space_id.to_string()))
+            .check_permission(&user_id, "docs.read", Some(&record_id_to_string(space_id)))
             .await?;
     } else {
         auth_service
@@ -144,7 +145,7 @@ pub async fn get_tag(
 
 pub async fn update_tag(
     Path(tag_id): Path<String>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
     Json(request): Json<UpdateTagRequest>,
 ) -> Result<Json<Tag>, ApiError> {
@@ -155,7 +156,7 @@ pub async fn update_tag(
     // 检查更新权限
     if let Some(space_id) = &tag.space_id {
         auth_service
-            .check_permission(&user_id, "docs.tag.update", Some(&space_id.to_string()))
+            .check_permission(&user_id, "docs.tag.update", Some(&record_id_to_string(space_id)))
             .await?;
     } else {
         auth_service
@@ -169,7 +170,7 @@ pub async fn update_tag(
 
 pub async fn delete_tag(
     Path(tag_id): Path<String>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<StatusCode, ApiError> {
     let tag_service = &app_state.tag_service;
@@ -179,7 +180,7 @@ pub async fn delete_tag(
     // 检查删除权限
     if let Some(space_id) = &tag.space_id {
         auth_service
-            .check_permission(&user_id, "docs.tag.delete", Some(&space_id.to_string()))
+            .check_permission(&user_id, "docs.tag.delete", Some(&record_id_to_string(space_id)))
             .await?;
     } else {
         auth_service
@@ -193,7 +194,7 @@ pub async fn delete_tag(
 
 pub async fn get_popular_tags(
     Query(query): Query<PopularTagsQuery>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<Vec<Tag>>, ApiError> {
     let tag_service = &app_state.tag_service;
@@ -218,7 +219,7 @@ pub async fn get_popular_tags(
 }
 
 pub async fn tag_document(
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
     Json(request): Json<TagDocumentRequest>,
 ) -> Result<Json<Vec<DocumentTag>>, ApiError> {
@@ -235,7 +236,7 @@ pub async fn tag_document(
 
 pub async fn untag_document(
     Path((document_id, tag_id)): Path<(String, String)>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<StatusCode, ApiError> {
     let tag_service = &app_state.tag_service;
@@ -251,7 +252,7 @@ pub async fn untag_document(
 
 pub async fn get_document_tags(
     Path(document_id): Path<String>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<DocumentTagsResponse>, ApiError> {
     let tag_service = &app_state.tag_service;
@@ -272,7 +273,7 @@ pub async fn get_document_tags(
 pub async fn get_documents_by_tag(
     Path(tag_id): Path<String>,
     Query(query): Query<TagQuery>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<TagDocumentsResponse>, ApiError> {
     let tag_service = &app_state.tag_service;
@@ -282,7 +283,7 @@ pub async fn get_documents_by_tag(
     // 检查标签读取权限
     if let Some(space_id) = &tag.space_id {
         auth_service
-            .check_permission(&user_id, "docs.read", Some(&space_id.to_string()))
+            .check_permission(&user_id, "docs.read", Some(&record_id_to_string(space_id)))
             .await?;
     } else {
         auth_service
@@ -311,7 +312,7 @@ pub async fn get_documents_by_tag(
 
 pub async fn get_tag_statistics(
     Query(query): Query<TagQuery>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<TagStatistics>, ApiError> {
     let tag_service = &app_state.tag_service;
@@ -336,7 +337,7 @@ pub async fn get_tag_statistics(
 
 pub async fn suggest_tags(
     Query(query): Query<TagQuery>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<Vec<Tag>>, ApiError> {
     let tag_service = &app_state.tag_service;
@@ -362,7 +363,7 @@ pub async fn suggest_tags(
     Ok(Json(tags))
 }
 
-pub fn router() -> Router<Arc<crate::AppState>> {
+pub fn router() -> Router {
     Router::new()
         .route("/", get(get_tags).post(create_tag))
         .route("/popular", get(get_popular_tags))

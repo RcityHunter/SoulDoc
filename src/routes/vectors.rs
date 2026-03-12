@@ -3,6 +3,7 @@ use axum::{
     http::StatusCode,
     Json,
     response::IntoResponse,
+    Extension,
 };
 use std::sync::Arc;
 use serde_json::json;
@@ -19,7 +20,7 @@ use crate::{
 /// 存储文档向量
 pub async fn store_document_vector(
     Path(document_id): Path<String>,
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Json(vector_data): Json<VectorData>,
 ) -> Result<impl IntoResponse> {
     let vector_service = VectorService::new(state.db.clone());
@@ -33,7 +34,7 @@ pub async fn store_document_vector(
 
 /// 向量相似度搜索
 pub async fn vector_search(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Json(request): Json<VectorSearchRequest>,
 ) -> Result<impl IntoResponse> {
     let vector_service = VectorService::new(state.db.clone());
@@ -48,7 +49,7 @@ pub async fn vector_search(
 /// 获取文档向量
 pub async fn get_document_vectors(
     Path(document_id): Path<String>,
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
 ) -> Result<impl IntoResponse> {
     let vector_service = VectorService::new(state.db.clone());
     
@@ -62,7 +63,7 @@ pub async fn get_document_vectors(
 /// 删除文档向量
 pub async fn delete_document_vector(
     Path((document_id, vector_id)): Path<(String, String)>,
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
 ) -> Result<impl IntoResponse> {
     let vector_service = VectorService::new(state.db.clone());
     
@@ -78,7 +79,7 @@ pub async fn delete_document_vector(
 
 /// 批量获取文档内容
 pub async fn batch_get_documents(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Json(request): Json<BatchGetRequest>,
 ) -> Result<impl IntoResponse> {
     let vector_service = VectorService::new(state.db.clone());
@@ -94,7 +95,7 @@ pub async fn batch_get_documents(
 
 /// 批量更新向量
 pub async fn batch_update_vectors(
-    State(state): State<Arc<AppState>>,
+    Extension(state): Extension<Arc<AppState>>,
     Json(request): Json<BatchVectorRequest>,
 ) -> Result<impl IntoResponse> {
     let vector_service = VectorService::new(state.db.clone());

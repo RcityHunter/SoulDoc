@@ -6,10 +6,9 @@ use crate::models::space_member::{
     MemberStatus, SpaceMemberResponse, MemberRole
 };
 use crate::services::auth::User;
-use crate::services::database::Database;
-use serde_json::Value;
+use crate::services::database::{Database, record_id_key};
 use std::sync::Arc;
-use surrealdb::sql::Thing;
+use surrealdb::types::RecordId as Thing;
 use tracing::{info, warn, error};
 use validator::Validate;
 use chrono::Utc;
@@ -17,13 +16,19 @@ use uuid::Uuid;
 
 /// 清理用户ID格式，确保和数据库存储格式一致
 fn clean_user_id_format(user_id: &str) -> String {
-    // 只移除 user: 前缀，保留 ⟨⟩ 符号以匹配数据库格式
-    let cleaned = user_id
-        .trim()
-        .strip_prefix("user:").unwrap_or(user_id)
+    // 统一成裸 UUID：移除前缀、包裹符、引号与反引号
+    let trimmed = user_id.trim();
+    let without_prefix = trimmed
+        .strip_prefix("user:")
+        .or_else(|| trimmed.strip_prefix("users:"))
+        .unwrap_or(trimmed)
         .trim();
-    
-    cleaned.to_string()
+
+    without_prefix
+        .trim_matches(|c| {
+            c == '⟨' || c == '⟩' || c == '"' || c == '\'' || c == '`' || c == ' '
+        })
+        .to_string()
 }
 
 pub struct SpaceMemberService {
@@ -53,37 +58,60 @@ impl SpaceMemberService {
             space_id
         };
 
-        // 检查是否为空间所有者
-        let owner_query = "SELECT owner_id FROM space WHERE id = $space_id";
-        let mut owner_result = self.db.client
+        // 检查是否为空间所有者（数据库内比较，避免反序列化形态差异）
+        let user_id_bracketed = format!("user:⟨{}⟩", clean_user_id);
+        let user_id_plain = format!("user:{}", clean_user_id);
+        let owner_query = r#"
+            SELECT count() AS count
+            FROM space
+            WHERE id = $space_id
+              AND (IF owner_id = NONE THEN '' ELSE type::string(owner_id) END) IN [$user_id_bracketed, $user_id_plain, $user_id_raw]
+            GROUP ALL
+        "#;
+        let owner_count: Vec<serde_json::Value> = self.db.client
             .query(owner_query)
-            .bind(("space_id", Thing::from(("space", actual_space_id))))
-            .await
-            .map_err(|e| AppError::Database(e))?;
-
-        if let Ok(spaces) = owner_result.take::<Vec<Value>>(0) {
-            if let Some(space) = spaces.first() {
-                if let Some(owner_id) = space.get("owner_id").and_then(|v| v.as_str()) {
-                    let clean_owner_id = clean_user_id_format(owner_id);
-                    if clean_owner_id == clean_user_id {
-                        info!("User is space owner, granting access");
-                        return Ok(true);
-                    }
-                }
-            }
-        }
-
-        // 检查是否为空间成员 - 只需要检查存在性，不需要完整的记录
-        let member_query = "SELECT id FROM space_member WHERE space_id = $space_id AND user_id = $user_id AND status = 'accepted'";
-        let member_result: Vec<serde_json::Value> = self.db.client
-            .query(member_query)
-            .bind(("space_id", Thing::from(("space", actual_space_id))))
-            .bind(("user_id", &clean_user_id))
+            .bind(("space_id", Thing::new("space", actual_space_id)))
+            .bind(("user_id_bracketed", user_id_bracketed.clone()))
+            .bind(("user_id_plain", user_id_plain.clone()))
+            .bind(("user_id_raw", clean_user_id.clone()))
             .await
             .map_err(|e| AppError::Database(e))?
             .take(0)?;
 
-        let has_access = !member_result.is_empty();
+        let is_owner = owner_count
+            .first()
+            .and_then(|v| v.get("count"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) > 0;
+        if is_owner {
+            info!("User is space owner, granting access");
+            return Ok(true);
+        }
+
+        // 检查是否为空间成员 - 只需要检查存在性，避免返回 Thing 导致反序列化错误
+        let member_query = r#"
+            SELECT count() AS count
+            FROM space_member
+            WHERE space_id = $space_id
+              AND type::string(user_id) IN [$user_id_bracketed, $user_id_plain, $user_id_raw]
+              AND status = 'accepted'
+            GROUP ALL
+        "#;
+        let member_result: Vec<serde_json::Value> = self.db.client
+            .query(member_query)
+            .bind(("space_id", Thing::new("space", actual_space_id)))
+            .bind(("user_id_bracketed", user_id_bracketed))
+            .bind(("user_id_plain", user_id_plain))
+            .bind(("user_id_raw", clean_user_id.clone()))
+            .await
+            .map_err(|e| AppError::Database(e))?
+            .take(0)?;
+
+        let has_access = member_result
+            .first()
+            .and_then(|v| v.get("count"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) > 0;
         if has_access {
             info!("User found as space member, granting access");
         } else {
@@ -105,33 +133,51 @@ impl SpaceMemberService {
         let clean_user_id = clean_user_id_format(user_id);
         info!("Checking permission '{}' for clean_user_id: {} (original: {}) in space: {}", permission, clean_user_id, user_id, actual_space_id);
 
-        // 首先检查是否为空间所有者
-        let owner_query = "SELECT owner_id FROM space WHERE id = $space_id";
-        let mut owner_result = self.db.client
-            .query(owner_query)
-            .bind(("space_id", Thing::from(("space", actual_space_id))))
-            .await
-            .map_err(|e| AppError::Database(e))?;
+        let user_id_bracketed = format!("user:⟨{}⟩", clean_user_id);
+        let user_id_plain = format!("user:{}", clean_user_id);
 
-        if let Ok(spaces) = owner_result.take::<Vec<Value>>(0) {
-            if let Some(space) = spaces.first() {
-                if let Some(owner_id) = space.get("owner_id").and_then(|v| v.as_str()) {
-                    // 比较owner_id时也需要考虑格式一致性
-                    let clean_owner_id = clean_user_id_format(owner_id);
-                    if clean_owner_id == clean_user_id {
-                        info!("User is space owner, granting permission");
-                        return Ok(true); // 所有者拥有所有权限
-                    }
-                }
-            }
+        // 先检查是否为空间所有者（数据库内比较）
+        let owner_query = r#"
+            SELECT count() AS count
+            FROM space
+            WHERE id = $space_id
+              AND (IF owner_id = NONE THEN '' ELSE type::string(owner_id) END) IN [$user_id_bracketed, $user_id_plain, $user_id_raw]
+            GROUP ALL
+        "#;
+        let owner_count: Vec<serde_json::Value> = self.db.client
+            .query(owner_query)
+            .bind(("space_id", Thing::new("space", actual_space_id)))
+            .bind(("user_id_bracketed", user_id_bracketed.clone()))
+            .bind(("user_id_plain", user_id_plain.clone()))
+            .bind(("user_id_raw", clean_user_id.clone()))
+            .await
+            .map_err(|e| AppError::Database(e))?
+            .take(0)?;
+
+        let is_owner = owner_count
+            .first()
+            .and_then(|v| v.get("count"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) > 0;
+        if is_owner {
+            info!("User is space owner, granting permission");
+            return Ok(true); // 所有者拥有所有权限
         }
 
         // 检查成员权限
-        let member_query = "SELECT role, permissions FROM space_member WHERE space_id = $space_id AND user_id = $user_id AND status = 'accepted'";
+        let member_query = r#"
+            SELECT role, permissions
+            FROM space_member
+            WHERE space_id = $space_id
+              AND type::string(user_id) IN [$user_id_bracketed, $user_id_plain, $user_id_raw]
+              AND status = 'accepted'
+        "#;
         let members: Vec<serde_json::Value> = self.db.client
             .query(member_query)
-            .bind(("space_id", Thing::from(("space", actual_space_id))))
-            .bind(("user_id", &clean_user_id))
+            .bind(("space_id", Thing::new("space", actual_space_id)))
+            .bind(("user_id_bracketed", user_id_bracketed))
+            .bind(("user_id_plain", user_id_plain))
+            .bind(("user_id_raw", clean_user_id.clone()))
             .await
             .map_err(|e| AppError::Database(e))?
             .take(0)?;
@@ -210,7 +256,7 @@ impl SpaceMemberService {
         // 使用 SQL 查询创建邀请记录，使用 SurrealDB 的时间函数和 duration 语法
         let query = format!(r#"
             CREATE space_invitation SET
-                space_id = type::thing('space', $space_id),
+                space_id = type::record($space_id),
                 email = $email,
                 user_id = $user_id,
                 invite_token = $invite_token,
@@ -225,7 +271,7 @@ impl SpaceMemberService {
 
         let created: Vec<SpaceInvitationDb> = self.db.client
             .query(query)
-            .bind(("space_id", clean_space_id))
+            .bind(("space_id", format!("space:{}", clean_space_id)))
             .bind(("email", request.email.clone()))
             .bind(("user_id", request.user_id.clone()))
             .bind(("invite_token", invite_token.clone()))
@@ -312,7 +358,7 @@ impl SpaceMemberService {
         }
 
         // 检查是否已经是成员
-        if self.can_access_space(&invitation.space_id.id.to_string(), Some(user_id)).await? {
+        if self.can_access_space(&record_id_key(&invitation.space_id), Some(user_id)).await? {
             return Err(AppError::Conflict("User is already a member of this space".to_string()));
         }
 
@@ -333,7 +379,7 @@ impl SpaceMemberService {
         "#;
 
         // 提取纯净的space_id和user_id，避免嵌套Thing
-        let raw_space_id = invitation.space_id.id.to_string();
+        let raw_space_id = record_id_key(&invitation.space_id);
         info!("Raw space_id from invitation: {}", raw_space_id);
         
         // 处理可能的嵌套Thing格式 space:⟨⟨space:xxxxx⟩⟩
@@ -362,7 +408,7 @@ impl SpaceMemberService {
 
         let mut create_result = self.db.client
             .query(create_member_query)
-            .bind(("space_id", Thing::from(("space", clean_space_id))))
+            .bind(("space_id", Thing::new("space", clean_space_id)))
             .bind(("user_id", clean_user_id))
             .bind(("role", invitation.role.clone()))
             .bind(("permissions", invitation.permissions.clone()))
@@ -393,14 +439,14 @@ impl SpaceMemberService {
             
             let mut update_result = self.db.client
                 .query(update_query)
-                .bind(("invitation_id", Thing::from(("space_invitation", invitation_id.id.to_string().as_str()))))
+                .bind(("invitation_id", Thing::new("space_invitation", record_id_key(invitation_id))))
                 .await
                 .map_err(|e| {
                     error!("Failed to update invitation used_count: {}", e);
                     AppError::Database(e)
                 })?;
                 
-            let _: Vec<Value> = update_result
+            let _: Vec<serde_json::Value> = update_result
                 .take(0)
                 .map_err(|e| {
                     error!("Failed to take update results: {}", e);
@@ -408,7 +454,7 @@ impl SpaceMemberService {
                 })?;
         }
 
-        info!("User {} accepted invitation to space {}", user_id, invitation.space_id.id.to_string());
+        info!("User {} accepted invitation to space {}", user_id, record_id_key(&invitation.space_id));
 
         Ok(created_member.into())
     }
@@ -430,7 +476,7 @@ impl SpaceMemberService {
         let query = "SELECT * FROM space_member WHERE space_id = $space_id ORDER BY created_at ASC";
         let members: Vec<SpaceMemberDb> = self.db.client
             .query(query)
-            .bind(("space_id", Thing::from(("space", actual_space_id))))
+            .bind(("space_id", Thing::new("space", actual_space_id)))
             .await
             .map_err(|e| AppError::Database(e))?
             .take(0)?;
@@ -462,7 +508,7 @@ impl SpaceMemberService {
         let query = "SELECT * FROM space_member WHERE space_id = $space_id AND user_id = $user_id";
         let members: Vec<SpaceMemberDb> = self.db.client
             .query(query)
-            .bind(("space_id", Thing::from(("space", actual_space_id))))
+            .bind(("space_id", Thing::new("space", actual_space_id)))
             .bind(("user_id", member_user_id))
             .await
             .map_err(|e| AppError::Database(e))?
@@ -490,7 +536,7 @@ impl SpaceMemberService {
             .bind(("role", &member.role))
             .bind(("permissions", &member.permissions))
             .bind(("updated_at", member.updated_at))
-            .bind(("space_id", Thing::from(("space", actual_space_id))))
+            .bind(("space_id", Thing::new("space", actual_space_id)))
             .bind(("user_id", member_user_id))
             .await
             .map_err(|e| AppError::Database(e))?
@@ -526,7 +572,7 @@ impl SpaceMemberService {
         // 删除成员记录
         let _: Option<SpaceMemberDb> = self.db.client
             .query("DELETE space_member WHERE space_id = $space_id AND user_id = $user_id")
-            .bind(("space_id", Thing::from(("space", actual_space_id))))
+            .bind(("space_id", Thing::new("space", actual_space_id)))
             .bind(("user_id", member_user_id))
             .await
             .map_err(|e| AppError::Database(e))?
@@ -548,7 +594,7 @@ impl SpaceMemberService {
             .take(0)?;
 
         let space_ids = members.into_iter()
-            .map(|member| member.space_id.id.to_string())
+            .map(|member| record_id_key(&member.space_id))
             .collect();
 
         Ok(space_ids)
@@ -609,7 +655,7 @@ impl SpaceMemberService {
         let query = "SELECT name FROM space WHERE id = $space_id";
         let mut response = self.db.client
             .query(query)
-            .bind(("space_id", Thing::from(("space", actual_space_id))))
+            .bind(("space_id", Thing::new("space", actual_space_id)))
             .await
             .map_err(|e| {
                 error!("Failed to get space name for {}: {}", space_id, e);

@@ -1,11 +1,11 @@
 use std::sync::Arc;
-use surrealdb::sql::Thing;
+use surrealdb::types::RecordId as Thing;
 use validator::Validate;
 
 use crate::{
     error::ApiError,
     models::version::{DocumentVersion, CreateVersionRequest, VersionChangeType},
-    services::{auth::AuthService, database::Database},
+    services::{auth::AuthService, database::{Database, record_id_to_string}},
 };
 
 #[derive(Clone)]
@@ -35,7 +35,7 @@ impl VersionService {
         self.unset_current_version(document_id).await?;
 
         let version = DocumentVersion::new(
-            Thing::from(("document", document_id)),
+            Thing::new("document", document_id),
             new_version_number,
             request.title,
             request.content,
@@ -83,7 +83,7 @@ impl VersionService {
 
         let versions: Vec<DocumentVersion> = self.db.client
             .query(query)
-            .bind(("document_id", Thing::from(("document", document_id))))
+            .bind(("document_id", Thing::new("document", document_id)))
             .bind(("limit", per_page))
             .bind(("offset", offset))
             .await
@@ -104,7 +104,7 @@ impl VersionService {
 
         let versions: Vec<DocumentVersion> = self.db.client
             .query(query)
-            .bind(("document_id", Thing::from(("document", document_id))))
+            .bind(("document_id", Thing::new("document", document_id)))
             .await
             .map_err(|e| ApiError::DatabaseError(e.to_string()))?
             .take(0)
@@ -122,7 +122,7 @@ impl VersionService {
         let old_version = self.get_version(version_id).await?;
         
         // 验证版本属于指定文档
-        if old_version.document_id.to_string() != format!("document:{}", document_id) {
+        if record_id_to_string(&old_version.document_id) != format!("document:{}", document_id) {
             return Err(ApiError::BadRequest("Version does not belong to document".to_string()));
         }
 
@@ -181,9 +181,9 @@ impl VersionService {
             GROUP ALL
         ";
 
-        let result: Vec<surrealdb::sql::Value> = self.db.client
+        let result: Vec<serde_json::Value> = self.db.client
             .query(query)
-            .bind(("document_id", Thing::from(("document", document_id))))
+            .bind(("document_id", Thing::new("document", document_id)))
             .await
             .map_err(|e| ApiError::DatabaseError(e.to_string()))?
             .take(0)
@@ -195,8 +195,8 @@ impl VersionService {
             Ok(VersionHistorySummary {
                 total_versions: 1,
                 latest_version_number: 1,
-                first_created: surrealdb::sql::Datetime::default(),
-                last_updated: surrealdb::sql::Datetime::default(),
+                first_created: surrealdb::types::Datetime::default(),
+                last_updated: surrealdb::types::Datetime::default(),
                 authors: vec![],
                 change_types_count: std::collections::HashMap::new(),
             })
@@ -204,8 +204,8 @@ impl VersionService {
             Ok(VersionHistorySummary {
                 total_versions: 0,
                 latest_version_number: 0,
-                first_created: surrealdb::sql::Datetime::default(),
-                last_updated: surrealdb::sql::Datetime::default(),
+                first_created: surrealdb::types::Datetime::default(),
+                last_updated: surrealdb::types::Datetime::default(),
                 authors: vec![],
                 change_types_count: std::collections::HashMap::new(),
             })
@@ -242,7 +242,7 @@ impl VersionService {
 
         let versions: Vec<DocumentVersion> = self.db.client
             .query(query)
-            .bind(("document_id", Thing::from(("document", document_id))))
+            .bind(("document_id", Thing::new("document", document_id)))
             .bind(("author_id", author_id))
             .await
             .map_err(|e| ApiError::DatabaseError(e.to_string()))?
@@ -260,9 +260,9 @@ impl VersionService {
             GROUP ALL
         ";
 
-        let result: Vec<surrealdb::sql::Value> = self.db.client
+        let result: Vec<serde_json::Value> = self.db.client
             .query(query)
-            .bind(("document_id", Thing::from(("document", document_id))))
+            .bind(("document_id", Thing::new("document", document_id)))
             .await
             .map_err(|e| ApiError::DatabaseError(e.to_string()))?
             .take(0)
@@ -270,7 +270,8 @@ impl VersionService {
 
         let max_version = result
             .first()
-            .and_then(|v| v.to_string().parse::<i64>().ok())
+            .and_then(|v| v.get("max_version"))
+            .and_then(|v| v.as_i64())
             .unwrap_or(0);
 
         Ok(max_version as i32)
@@ -284,9 +285,9 @@ impl VersionService {
             AND is_current = true
         ";
 
-        let _: Vec<surrealdb::sql::Value> = self.db.client
+        let _: Vec<serde_json::Value> = self.db.client
             .query(query)
-            .bind(("document_id", Thing::from(("document", document_id))))
+            .bind(("document_id", Thing::new("document", document_id)))
             .await
             .map_err(|e| ApiError::DatabaseError(e.to_string()))?
             .take(0)
@@ -365,8 +366,8 @@ pub enum DiffChangeType {
 pub struct VersionHistorySummary {
     pub total_versions: i64,
     pub latest_version_number: i32,
-    pub first_created: surrealdb::sql::Datetime,
-    pub last_updated: surrealdb::sql::Datetime,
+    pub first_created: surrealdb::types::Datetime,
+    pub last_updated: surrealdb::types::Datetime,
     pub authors: Vec<String>,
     pub change_types_count: std::collections::HashMap<String, i64>,
 }

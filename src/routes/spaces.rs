@@ -7,12 +7,13 @@ use axum::{
     response::Json,
     routing::{get, post, put, delete},
     Router,
+    Extension,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::{info, warn};
 
-pub fn router() -> Router<Arc<AppState>> {
+pub fn router() -> Router {
     Router::new()
         .route("/", get(list_spaces).post(create_space))
         .route("/create", post(handle_legacy_create)) // Legacy frontend support
@@ -24,7 +25,7 @@ pub fn router() -> Router<Arc<AppState>> {
 /// 获取空间列表
 /// GET /api/spaces
 async fn list_spaces(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Query(query): Query<SpaceListQuery>,
     OptionalUser(user): OptionalUser,
 ) -> Result<Json<Value>> {
@@ -40,7 +41,7 @@ async fn list_spaces(
 /// 创建新空间
 /// POST /api/spaces
 async fn create_space(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     user: User,
     Json(request): Json<CreateSpaceRequest>,
 ) -> Result<Json<Value>> {
@@ -62,7 +63,7 @@ async fn create_space(
 /// 获取空间详情
 /// GET /api/spaces/:slug
 async fn get_space(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(slug): Path<String>,
     OptionalUser(user): OptionalUser,
 ) -> Result<Json<Value>> {
@@ -78,7 +79,7 @@ async fn get_space(
 /// 更新空间信息
 /// PUT /api/spaces/:slug
 async fn update_space(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(slug): Path<String>,
     user: User,
     Json(request): Json<UpdateSpaceRequest>,
@@ -97,7 +98,7 @@ async fn update_space(
 /// 删除空间
 /// DELETE /api/spaces/:slug
 async fn delete_space(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(slug): Path<String>,
     user: User,
 ) -> Result<Json<Value>> {
@@ -115,7 +116,7 @@ async fn delete_space(
 /// 获取空间统计信息
 /// GET /api/spaces/:slug/stats
 async fn get_space_stats(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(slug): Path<String>,
     OptionalUser(user): OptionalUser,
 ) -> Result<Json<Value>> {
@@ -134,17 +135,17 @@ async fn get_space_stats(
 
 /// Legacy handler for frontend calls to /create (should use POST /)
 async fn handle_legacy_create(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     user: User,
     Json(request): Json<CreateSpaceRequest>,
 ) -> Result<Json<Value>> {
     // Forward to the correct create_space handler
-    create_space(State(app_state), user, Json(request)).await
+    create_space(Extension(app_state), user, Json(request)).await
 }
 
 /// Legacy handler for frontend calls to /create/stats
 async fn handle_legacy_create_stats(
-    State(_app_state): State<Arc<AppState>>,
+    Extension(_app_state): Extension<Arc<AppState>>,
     OptionalUser(_user): OptionalUser,
 ) -> Result<Json<Value>> {
     Err(AppError::BadRequest(

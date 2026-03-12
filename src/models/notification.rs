@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use surrealdb::sql::Thing;
+use surrealdb::types::RecordId as Thing;
+use crate::services::database::record_id_to_string;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -75,7 +76,7 @@ pub struct NotificationListQuery {
 impl From<NotificationDb> for Notification {
     fn from(db: NotificationDb) -> Self {
         Self {
-            id: db.id.map(|thing| thing.id.to_string()),
+            id: db.id.map(|thing| record_id_to_string(&thing)),
             user_id: db.user_id,
             notification_type: db.notification_type,
             title: db.title,

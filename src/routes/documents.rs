@@ -7,12 +7,29 @@ use axum::{
     response::Json,
     routing::{get, post, put, delete},
     Router,
+    Extension,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::{info, warn};
 
-pub fn router() -> Router<Arc<crate::AppState>> {
+fn normalize_user_id(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let no_prefix = trimmed
+        .strip_prefix("user:")
+        .or_else(|| trimmed.strip_prefix("users:"))
+        .unwrap_or(trimmed)
+        .trim();
+    no_prefix
+        .trim_matches(|c| c == '⟨' || c == '⟩' || c == '"' || c == '\'' || c == '`' || c == ' ')
+        .to_string()
+}
+
+fn is_space_owner(space_owner_id: &str, user_id: &str) -> bool {
+    normalize_user_id(space_owner_id) == normalize_user_id(user_id)
+}
+
+pub fn router() -> Router {
     Router::new()
         .route("/:space_slug", get(list_documents).post(create_document))
         .route("/:space_slug/tree", get(get_document_tree))
@@ -28,7 +45,7 @@ pub fn router() -> Router<Arc<crate::AppState>> {
 /// 获取文档列表
 /// GET /api/docs/:space_slug
 async fn list_documents(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(space_slug): Path<String>,
     Query(query): Query<DocumentQuery>,
     OptionalUser(user): OptionalUser,
@@ -38,11 +55,13 @@ async fn list_documents(
     
     // 检查读取权限（包括成员权限）
     if let Some(user) = &user {
-        if !app_state.space_member_service.can_access_space(&space.id, Some(&user.id)).await? {
-            return Err(AppError::Authorization("Access denied to this space".to_string()));
-        }
-        if !app_state.space_member_service.check_permission(&space.id, &user.id, "docs.read").await? {
-            return Err(AppError::Authorization("Permission denied: docs.read required".to_string()));
+        if !is_space_owner(&space.owner_id, &user.id) {
+            if !app_state.space_member_service.can_access_space(&space.id, Some(&user.id)).await? {
+                return Err(AppError::Authorization("Access denied to this space".to_string()));
+            }
+            if !app_state.space_member_service.check_permission(&space.id, &user.id, "docs.read").await? {
+                return Err(AppError::Authorization("Permission denied: docs.read required".to_string()));
+            }
         }
     } else {
         // 未登录用户只能访问公开空间
@@ -63,7 +82,7 @@ async fn list_documents(
 /// 创建新文档
 /// POST /api/docs/:space_slug
 async fn create_document(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(space_slug): Path<String>,
     user: User,
     Json(request): Json<CreateDocumentRequest>,
@@ -72,11 +91,13 @@ async fn create_document(
     let space = app_state.space_service.get_space_by_slug(&space_slug, Some(&user)).await?;
     
     // 检查空间访问和文档写入权限
-    if !app_state.space_member_service.can_access_space(&space.id, Some(&user.id)).await? {
-        return Err(AppError::Authorization("Access denied to this space".to_string()));
-    }
-    if !app_state.space_member_service.check_permission(&space.id, &user.id, "docs.write").await? {
-        return Err(AppError::Authorization("Permission denied: docs.write required".to_string()));
+    if !is_space_owner(&space.owner_id, &user.id) {
+        if !app_state.space_member_service.can_access_space(&space.id, Some(&user.id)).await? {
+            return Err(AppError::Authorization("Access denied to this space".to_string()));
+        }
+        if !app_state.space_member_service.check_permission(&space.id, &user.id, "docs.write").await? {
+            return Err(AppError::Authorization("Permission denied: docs.write required".to_string()));
+        }
     }
     
     let result = app_state.document_service.create_document(&space.id, &user.id, request).await?;
@@ -93,7 +114,7 @@ async fn create_document(
 /// 获取文档详情
 /// GET /api/docs/:space_slug/:doc_slug
 async fn get_document(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path((space_slug, doc_slug)): Path<(String, String)>,
     OptionalUser(user): OptionalUser,
 ) -> Result<Json<Value>> {
@@ -124,7 +145,7 @@ async fn get_document(
 /// 更新文档
 /// PUT /api/docs/:space_slug/:doc_slug
 async fn update_document(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path((space_slug, doc_slug)): Path<(String, String)>,
     user: User,
     Json(request): Json<UpdateDocumentRequest>,
@@ -162,7 +183,7 @@ async fn update_document(
 /// 删除文档
 /// DELETE /api/docs/:space_slug/:doc_slug
 async fn delete_document(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path((space_slug, doc_slug)): Path<(String, String)>,
     user: User,
 ) -> Result<Json<Value>> {
@@ -199,7 +220,7 @@ async fn delete_document(
 /// 获取文档树结构
 /// GET /api/docs/:space_slug/tree
 async fn get_document_tree(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(space_slug): Path<String>,
     OptionalUser(user): OptionalUser,
 ) -> Result<Json<Value>> {
@@ -211,13 +232,15 @@ async fn get_document_tree(
     
     // 检查读取权限（包括成员权限）
     if let Some(user) = &user {
-        // 首先检查基础权限
-        if !app_state.space_member_service.can_access_space(&space.id, Some(&user.id)).await? {
-            return Err(AppError::Authorization("Access denied to this space".to_string()).into());
-        }
-        // 然后检查具体的docs.read权限
-        if !app_state.space_member_service.check_permission(&space.id, &user.id, "docs.read").await? {
-            return Err(AppError::Authorization("Permission denied: docs.read required".to_string()).into());
+        if !is_space_owner(&space.owner_id, &user.id) {
+            // 首先检查基础权限
+            if !app_state.space_member_service.can_access_space(&space.id, Some(&user.id)).await? {
+                return Err(AppError::Authorization("Access denied to this space".to_string()).into());
+            }
+            // 然后检查具体的docs.read权限
+            if !app_state.space_member_service.check_permission(&space.id, &user.id, "docs.read").await? {
+                return Err(AppError::Authorization("Permission denied: docs.read required".to_string()).into());
+            }
         }
     } else {
         // 未登录用户只能访问公开空间
@@ -239,7 +262,7 @@ async fn get_document_tree(
 /// 获取文档子级
 /// GET /api/docs/:space_slug/:doc_slug/children
 async fn get_document_children(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path((space_slug, doc_slug)): Path<(String, String)>,
     OptionalUser(user): OptionalUser,
 ) -> Result<Json<Value>> {
@@ -276,7 +299,7 @@ async fn get_document_children(
 /// 获取文档面包屑导航
 /// GET /api/docs/:space_slug/:doc_slug/breadcrumbs
 async fn get_document_breadcrumbs(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path((space_slug, doc_slug)): Path<(String, String)>,
     OptionalUser(user): OptionalUser,
 ) -> Result<Json<Value>> {
@@ -313,7 +336,7 @@ async fn get_document_breadcrumbs(
 /// Legacy handler for frontend calls to /create/tree
 /// This is a temporary compatibility route
 async fn handle_legacy_create_tree(
-    State(_app_state): State<Arc<AppState>>,
+    Extension(_app_state): Extension<Arc<AppState>>,
     OptionalUser(_user): OptionalUser,
 ) -> Result<Json<Value>> {
     Err(AppError::BadRequest(
@@ -324,7 +347,7 @@ async fn handle_legacy_create_tree(
 /// 根据ID获取文档详情
 /// GET /api/docs/documents/id/:doc_id
 async fn get_document_by_id(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(doc_id): Path<String>,
     OptionalUser(user): OptionalUser,
 ) -> Result<Json<Value>> {
@@ -343,7 +366,7 @@ async fn get_document_by_id(
 /// 根据ID更新文档
 /// PUT /api/docs/documents/id/:doc_id
 async fn update_document_by_id(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(doc_id): Path<String>,
     user: User,
     Json(request): Json<UpdateDocumentRequest>,
@@ -364,11 +387,13 @@ async fn update_document_by_id(
     let space = app_state.space_service.get_space_by_id(space_id, Some(&user)).await?;
     
     // 检查写入权限
-    if !app_state.space_member_service.can_access_space(&space.id, Some(&user.id)).await? {
-        return Err(AppError::Authorization("Access denied to this space".to_string()));
-    }
-    if !app_state.space_member_service.check_permission(&space.id, &user.id, "docs.write").await? {
-        return Err(AppError::Authorization("Permission denied: docs.write required".to_string()));
+    if !is_space_owner(&space.owner_id, &user.id) {
+        if !app_state.space_member_service.can_access_space(&space.id, Some(&user.id)).await? {
+            return Err(AppError::Authorization("Access denied to this space".to_string()));
+        }
+        if !app_state.space_member_service.check_permission(&space.id, &user.id, "docs.write").await? {
+            return Err(AppError::Authorization("Permission denied: docs.write required".to_string()));
+        }
     }
     
     // 更新文档
@@ -386,7 +411,7 @@ async fn update_document_by_id(
 /// 根据ID删除文档
 /// DELETE /api/docs/documents/id/:doc_id
 async fn delete_document_by_id(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(doc_id): Path<String>,
     user: User,
 ) -> Result<Json<Value>> {
@@ -406,11 +431,13 @@ async fn delete_document_by_id(
     let space = app_state.space_service.get_space_by_id(space_id, Some(&user)).await?;
     
     // 检查删除权限
-    if !app_state.space_member_service.can_access_space(&space.id, Some(&user.id)).await? {
-        return Err(AppError::Authorization("Access denied to this space".to_string()));
-    }
-    if !app_state.space_member_service.check_permission(&space.id, &user.id, "docs.delete").await? {
-        return Err(AppError::Authorization("Permission denied: docs.delete required".to_string()));
+    if !is_space_owner(&space.owner_id, &user.id) {
+        if !app_state.space_member_service.can_access_space(&space.id, Some(&user.id)).await? {
+            return Err(AppError::Authorization("Access denied to this space".to_string()));
+        }
+        if !app_state.space_member_service.check_permission(&space.id, &user.id, "docs.delete").await? {
+            return Err(AppError::Authorization("Permission denied: docs.delete required".to_string()));
+        }
     }
     
     // 删除文档
@@ -428,7 +455,7 @@ async fn delete_document_by_id(
 /// 根据ID获取文档子级
 /// GET /api/docs/documents/id/:doc_id/children
 async fn get_document_children_by_id(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(doc_id): Path<String>,
     OptionalUser(user): OptionalUser,
 ) -> Result<Json<Value>> {
@@ -447,7 +474,7 @@ async fn get_document_children_by_id(
 /// 根据ID获取文档面包屑导航
 /// GET /api/docs/documents/id/:doc_id/breadcrumbs
 async fn get_document_breadcrumbs_by_id(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(doc_id): Path<String>,
     OptionalUser(user): OptionalUser,
 ) -> Result<Json<Value>> {

@@ -10,6 +10,7 @@ pub mod stats;
 pub mod tags;
 pub mod versions;
 pub mod vectors;
+pub mod auth;
 
 #[cfg(feature = "installer")]
 pub mod installer;

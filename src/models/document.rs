@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use validator::Validate;
-use surrealdb::sql::Thing;
+use surrealdb::types::RecordId as Thing;
+use crate::services::database::{record_id_key, record_id_to_string};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Document {
@@ -342,14 +343,14 @@ pub struct DocumentDb {
 impl From<DocumentDb> for Document {
     fn from(db: DocumentDb) -> Self {
         Self {
-            id: db.id.map(|thing| thing.to_string()),
-            space_id: db.space_id.to_string(),
+            id: db.id.map(|thing| record_id_to_string(&thing)),
+            space_id: record_id_to_string(&db.space_id),
             title: db.title,
             slug: db.slug,
             content: db.content,
             excerpt: db.excerpt,
             is_public: db.is_public,
-            parent_id: db.parent_id.map(|thing| thing.to_string()),
+            parent_id: db.parent_id.map(|thing| record_id_key(&thing)),
             order_index: db.order_index,
             author_id: db.author_id,
             last_editor_id: db.last_editor_id,

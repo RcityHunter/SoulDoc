@@ -12,6 +12,7 @@ use std::sync::Arc;
 use crate::{
     error::ApiError,
     models::version::{DocumentVersion, CreateVersionRequest},
+    services::database::record_id_to_string,
     services::{
         auth::AuthService, 
         versions::{VersionService, VersionComparison, VersionHistorySummary},
@@ -48,7 +49,7 @@ pub struct CompareVersionsQuery {
 pub async fn get_document_versions(
     Path(document_id): Path<String>,
     Query(query): Query<VersionQuery>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<VersionListResponse>, ApiError> {
     let version_service = &app_state.version_service;
@@ -85,7 +86,7 @@ pub async fn get_document_versions(
 
 pub async fn create_document_version(
     Path(document_id): Path<String>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
     Json(request): Json<CreateVersionRequest>,
 ) -> Result<Json<DocumentVersion>, ApiError> {
@@ -104,7 +105,7 @@ pub async fn create_document_version(
 
 pub async fn get_version(
     Path((document_id, version_id)): Path<(String, String)>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<DocumentVersion>, ApiError> {
     let version_service = &app_state.version_service;
@@ -116,7 +117,7 @@ pub async fn get_version(
     let version = version_service.get_version(&version_id).await?;
 
     // 验证版本属于指定文档
-    if version.document_id.to_string() != format!("document:{}", document_id) {
+    if record_id_to_string(&version.document_id) != format!("document:{}", document_id) {
         return Err(ApiError::NotFound("Version not found".to_string()));
     }
 
@@ -125,7 +126,7 @@ pub async fn get_version(
 
 pub async fn get_current_version(
     Path(document_id): Path<String>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<Option<DocumentVersion>>, ApiError> {
     let version_service = &app_state.version_service;
@@ -143,7 +144,7 @@ pub async fn get_current_version(
 
 pub async fn restore_version(
     Path((document_id, version_id)): Path<(String, String)>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
     Json(_request): Json<RestoreVersionRequest>,
 ) -> Result<Json<DocumentVersion>, ApiError> {
@@ -163,7 +164,7 @@ pub async fn restore_version(
 pub async fn compare_versions(
     Path(document_id): Path<String>,
     Query(query): Query<CompareVersionsQuery>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<VersionComparison>, ApiError> {
     let version_service = &app_state.version_service;
@@ -181,7 +182,7 @@ pub async fn compare_versions(
 
 pub async fn get_version_history_summary(
     Path(document_id): Path<String>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<VersionHistorySummary>, ApiError> {
     let version_service = &app_state.version_service;
@@ -199,7 +200,7 @@ pub async fn get_version_history_summary(
 
 pub async fn delete_version(
     Path((document_id, version_id)): Path<(String, String)>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<StatusCode, ApiError> {
     let version_service = &app_state.version_service;
@@ -217,7 +218,7 @@ pub async fn delete_version(
 pub async fn get_version_diff(
     Path((document_id, version_id)): Path<(String, String)>,
     Query(query): Query<CompareVersionsQuery>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<VersionComparison>, ApiError> {
     let version_service = &app_state.version_service;
@@ -237,7 +238,7 @@ pub async fn get_version_diff(
 pub async fn get_versions_by_date_range(
     Path(document_id): Path<String>,
     Query(query): Query<DateRangeQuery>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<Vec<DocumentVersion>>, ApiError> {
     let version_service = &app_state.version_service;
@@ -260,7 +261,7 @@ pub struct DateRangeQuery {
     pub to_date: Option<String>,
 }
 
-pub fn router() -> Router<Arc<crate::AppState>> {
+pub fn router() -> Router {
     Router::new()
         .route("/:document_id/versions", get(get_document_versions).post(create_document_version))
         .route("/:document_id/versions/current", get(get_current_version))

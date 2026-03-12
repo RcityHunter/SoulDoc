@@ -1,11 +1,11 @@
 use std::sync::Arc;
-use surrealdb::sql::Thing;
+use surrealdb::types::RecordId as Thing;
 use validator::Validate;
 
 use crate::{
     error::ApiError,
     models::tag::{Tag, DocumentTag, CreateTagRequest, UpdateTagRequest, TagDocumentRequest},
-    services::{auth::AuthService, database::Database},
+    services::{auth::AuthService, database::{Database, record_id_to_string}},
 };
 
 #[derive(Clone)]
@@ -32,7 +32,7 @@ impl TagService {
         }
 
         let space_thing = if let Some(space_id) = &request.space_id {
-            Some(Thing::from(("space", space_id.as_str())))
+            Some(Thing::new("space", space_id.as_str()))
         } else {
             None
         };
@@ -74,7 +74,7 @@ impl TagService {
 
         if let Some(name) = request.name {
             // 检查新名称是否与其他标签冲突
-            if name != tag.name && self.tag_exists_in_space(&tag.space_id.as_ref().map(|s| s.to_string()), &name).await? {
+            if name != tag.name && self.tag_exists_in_space(&tag.space_id.as_ref().map(record_id_to_string), &name).await? {
                 return Err(ApiError::Conflict("Tag name already exists in this space".to_string()));
             }
             tag.name = name;
@@ -89,7 +89,7 @@ impl TagService {
             tag.color = color;
         }
 
-        tag.updated_at = surrealdb::sql::Datetime::default();
+        tag.updated_at = surrealdb::types::Datetime::default();
 
         let updated: Option<Tag> = self.db.client
             .update(("tag", tag_id))
@@ -103,9 +103,9 @@ impl TagService {
     pub async fn delete_tag(&self, tag_id: &str) -> Result<(), ApiError> {
         // 首先删除所有与此标签关联的文档标签关系
         let query = "DELETE document_tag WHERE tag_id = $tag_id";
-        let _: Vec<surrealdb::sql::Value> = self.db.client
+        let _: Vec<serde_json::Value> = self.db.client
             .query(query)
-            .bind(("tag_id", Thing::from(("tag", tag_id))))
+            .bind(("tag_id", Thing::new("tag", tag_id)))
             .await
             .map_err(|e| ApiError::DatabaseError(e.to_string()))?
             .take(0)
@@ -137,7 +137,7 @@ impl TagService {
         let mut db_query = self.db.client.query(query);
         
         if let Some(space_id) = space_id {
-            db_query = db_query.bind(("space_id", Thing::from(("space", space_id))));
+            db_query = db_query.bind(("space_id", Thing::new("space", space_id)));
         }
 
         let tags: Vec<Tag> = db_query
@@ -161,7 +161,7 @@ impl TagService {
         let mut db_query = self.db.client.query(query);
         
         if let Some(space_id) = space_id {
-            db_query = db_query.bind(("space_id", Thing::from(("space", space_id))));
+            db_query = db_query.bind(("space_id", Thing::new("space", space_id)));
         }
 
         let tags: Vec<Tag> = db_query
@@ -184,7 +184,7 @@ impl TagService {
         let mut db_query = self.db.client.query(search_query);
         
         if let Some(space_id) = space_id {
-            db_query = db_query.bind(("space_id", Thing::from(("space", space_id))));
+            db_query = db_query.bind(("space_id", Thing::new("space", space_id)));
         }
 
         let tags: Vec<Tag> = db_query
@@ -204,13 +204,13 @@ impl TagService {
         tagger_id: &str,
         request: TagDocumentRequest,
     ) -> Result<Vec<DocumentTag>, ApiError> {
-        let document_thing = Thing::from(("document", request.document_id.as_str()));
+        let document_thing = Thing::new("document", request.document_id.as_str());
         let mut created_tags = Vec::new();
 
         for tag_id in request.tag_ids {
             // 检查关联是否已存在
             if !self.document_tag_exists(&request.document_id, &tag_id).await? {
-                let tag_thing = Thing::from(("tag", tag_id.as_str()));
+                let tag_thing = Thing::new("tag", tag_id.as_str());
                 
                 let document_tag = DocumentTag::new(
                     document_thing.clone(),
@@ -243,10 +243,10 @@ impl TagService {
     ) -> Result<(), ApiError> {
         let query = "DELETE document_tag WHERE document_id = $document_id AND tag_id = $tag_id";
         
-        let _: Vec<surrealdb::sql::Value> = self.db.client
+        let _: Vec<serde_json::Value> = self.db.client
             .query(query)
-            .bind(("document_id", Thing::from(("document", document_id))))
-            .bind(("tag_id", Thing::from(("tag", tag_id))))
+            .bind(("document_id", Thing::new("document", document_id)))
+            .bind(("tag_id", Thing::new("tag", tag_id)))
             .await
             .map_err(|e| ApiError::DatabaseError(e.to_string()))?
             .take(0)
@@ -268,7 +268,7 @@ impl TagService {
 
         let tags: Vec<Tag> = self.db.client
             .query(query)
-            .bind(("document_id", Thing::from(("document", document_id))))
+            .bind(("document_id", Thing::new("document", document_id)))
             .await
             .map_err(|e| ApiError::DatabaseError(e.to_string()))?
             .take(0)
@@ -292,9 +292,9 @@ impl TagService {
             LIMIT $limit START $offset
         ";
 
-        let results: Vec<surrealdb::sql::Value> = self.db.client
+        let results: Vec<serde_json::Value> = self.db.client
             .query(query)
-            .bind(("tag_id", Thing::from(("tag", tag_id))))
+            .bind(("tag_id", Thing::new("tag", tag_id)))
             .bind(("limit", per_page))
             .bind(("offset", offset))
             .await
@@ -304,7 +304,7 @@ impl TagService {
 
         let document_ids: Vec<String> = results
             .into_iter()
-            .filter_map(|v| v.to_string().parse().ok())
+            .filter_map(|v| v.get("document_id").and_then(|id| id.as_str()).map(|s| s.to_string()))
             .collect();
 
         Ok(document_ids)
@@ -319,10 +319,10 @@ impl TagService {
 
         let mut db_query = self.db.client.query(total_query);
         if let Some(space_id) = space_id {
-            db_query = db_query.bind(("space_id", Thing::from(("space", space_id))));
+            db_query = db_query.bind(("space_id", Thing::new("space", space_id)));
         }
 
-        let total_result: Vec<surrealdb::sql::Value> = db_query
+        let total_result: Vec<serde_json::Value> = db_query
             .await
             .map_err(|e| ApiError::DatabaseError(e.to_string()))?
             .take(0)
@@ -330,7 +330,8 @@ impl TagService {
 
         let total_tags = total_result
             .first()
-            .and_then(|v| v.to_string().parse::<i64>().ok())
+            .and_then(|v| v.get("total"))
+            .and_then(|v| v.as_i64())
             .unwrap_or(0);
 
         let used_query = if let Some(space_id) = space_id {
@@ -341,10 +342,10 @@ impl TagService {
 
         let mut db_query = self.db.client.query(used_query);
         if let Some(space_id) = space_id {
-            db_query = db_query.bind(("space_id", Thing::from(("space", space_id))));
+            db_query = db_query.bind(("space_id", Thing::new("space", space_id)));
         }
 
-        let used_result: Vec<surrealdb::sql::Value> = db_query
+        let used_result: Vec<serde_json::Value> = db_query
             .await
             .map_err(|e| ApiError::DatabaseError(e.to_string()))?
             .take(0)
@@ -352,7 +353,8 @@ impl TagService {
 
         let used_tags = used_result
             .first()
-            .and_then(|v| v.to_string().parse::<i64>().ok())
+            .and_then(|v| v.get("used"))
+            .and_then(|v| v.as_i64())
             .unwrap_or(0);
 
         Ok(TagStatistics {
@@ -373,10 +375,10 @@ impl TagService {
 
         let mut db_query = self.db.client.query(query);
         if let Some(space_id) = space_id {
-            db_query = db_query.bind(("space_id", Thing::from(("space", space_id.as_str()))));
+            db_query = db_query.bind(("space_id", Thing::new("space", space_id.as_str())));
         }
 
-        let result: Vec<surrealdb::sql::Value> = db_query
+        let result: Vec<serde_json::Value> = db_query
             .bind(("name", name))
             .await
             .map_err(|e| ApiError::DatabaseError(e.to_string()))?
@@ -385,7 +387,8 @@ impl TagService {
 
         let count = result
             .first()
-            .and_then(|v| v.to_string().parse::<i64>().ok())
+            .and_then(|v| v.get("count"))
+            .and_then(|v| v.as_i64())
             .unwrap_or(0);
 
         Ok(count > 0)
@@ -394,10 +397,10 @@ impl TagService {
     async fn document_tag_exists(&self, document_id: &str, tag_id: &str) -> Result<bool, ApiError> {
         let query = "SELECT count() FROM document_tag WHERE document_id = $document_id AND tag_id = $tag_id GROUP ALL";
 
-        let result: Vec<surrealdb::sql::Value> = self.db.client
+        let result: Vec<serde_json::Value> = self.db.client
             .query(query)
-            .bind(("document_id", Thing::from(("document", document_id))))
-            .bind(("tag_id", Thing::from(("tag", tag_id))))
+            .bind(("document_id", Thing::new("document", document_id)))
+            .bind(("tag_id", Thing::new("tag", tag_id)))
             .await
             .map_err(|e| ApiError::DatabaseError(e.to_string()))?
             .take(0)
@@ -405,7 +408,8 @@ impl TagService {
 
         let count = result
             .first()
-            .and_then(|v| v.to_string().parse::<i64>().ok())
+            .and_then(|v| v.get("count"))
+            .and_then(|v| v.as_i64())
             .unwrap_or(0);
 
         Ok(count > 0)
@@ -414,9 +418,9 @@ impl TagService {
     async fn increment_tag_usage(&self, tag_id: &str) -> Result<(), ApiError> {
         let query = "UPDATE tag SET usage_count += 1 WHERE id = $tag_id";
 
-        let _: Vec<surrealdb::sql::Value> = self.db.client
+        let _: Vec<serde_json::Value> = self.db.client
             .query(query)
-            .bind(("tag_id", Thing::from(("tag", tag_id))))
+            .bind(("tag_id", Thing::new("tag", tag_id)))
             .await
             .map_err(|e| ApiError::DatabaseError(e.to_string()))?
             .take(0)
@@ -428,9 +432,9 @@ impl TagService {
     async fn decrement_tag_usage(&self, tag_id: &str) -> Result<(), ApiError> {
         let query = "UPDATE tag SET usage_count = math::max(usage_count - 1, 0) WHERE id = $tag_id";
 
-        let _: Vec<surrealdb::sql::Value> = self.db.client
+        let _: Vec<serde_json::Value> = self.db.client
             .query(query)
-            .bind(("tag_id", Thing::from(("tag", tag_id))))
+            .bind(("tag_id", Thing::new("tag", tag_id)))
             .await
             .map_err(|e| ApiError::DatabaseError(e.to_string()))?
             .take(0)

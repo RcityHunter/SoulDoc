@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use surrealdb::sql::{Datetime, Thing};
+use surrealdb::types::{Datetime, RecordId as Thing};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchIndex {

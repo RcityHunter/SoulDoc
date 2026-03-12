@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::path::Path;
 use axum::extract::Multipart;
 use anyhow::Result;
-use surrealdb::sql::{Datetime, Thing};
+use surrealdb::types::RecordId as Thing;
 use uuid::Uuid;
 use tracing::{info, error, warn};
 use tokio::fs as async_fs;
@@ -13,7 +13,7 @@ use validator::Validate;
 use crate::{
     error::ApiError,
     models::file::{FileUpload, FileResponse, FileListResponse, FileQuery, UploadFileRequest},
-    services::{database::Database, auth::AuthService},
+    services::{database::{Database, record_id_key}, auth::AuthService},
 };
 
 #[derive(Clone)]
@@ -34,6 +34,14 @@ impl FileUploadService {
                 .unwrap_or_else(|_| "10485760".to_string()) // 10MB default
                 .parse()
                 .unwrap_or(10485760),
+        }
+    }
+
+    fn record_id_from_input(table: &str, value: &str) -> Thing {
+        if let Some((tbl, key)) = value.split_once(':') {
+            Thing::new(tbl, key)
+        } else {
+            Thing::new(table, value)
         }
     }
 
@@ -139,15 +147,11 @@ impl FileUploadService {
 
         // 设置关联的空间或文档
         if let Some(space_id) = &request.space_id {
-            if let Ok(space_thing) = space_id.parse::<Thing>() {
-                file_upload = file_upload.with_space(space_thing);
-            }
+            file_upload = file_upload.with_space(Self::record_id_from_input("space", space_id));
         }
 
         if let Some(document_id) = &request.document_id {
-            if let Ok(doc_thing) = document_id.parse::<Thing>() {
-                file_upload = file_upload.with_document(doc_thing);
-            }
+            file_upload = file_upload.with_document(Self::record_id_from_input("document", document_id));
         }
 
         let created_files: Vec<FileUpload> = self.db.client
@@ -242,15 +246,11 @@ impl FileUploadService {
 
         // 设置关联的空间或文档
         if let Some(space_id) = &request.space_id {
-            if let Ok(space_thing) = space_id.parse::<Thing>() {
-                file_upload = file_upload.with_space(space_thing);
-            }
+            file_upload = file_upload.with_space(Self::record_id_from_input("space", space_id));
         }
 
         if let Some(document_id) = &request.document_id {
-            if let Ok(doc_thing) = document_id.parse::<Thing>() {
-                file_upload = file_upload.with_document(doc_thing);
-            }
+            file_upload = file_upload.with_document(Self::record_id_from_input("document", document_id));
         }
 
         let created_files: Vec<FileUpload> = self.db.client
@@ -273,11 +273,8 @@ impl FileUploadService {
     }
 
     pub async fn get_file(&self, file_id: &str) -> Result<FileUpload, ApiError> {
-        let file_thing = file_id.parse::<Thing>()
-            .map_err(|_| ApiError::bad_request("Invalid file ID".to_string()))?;
-
         let file: Option<FileUpload> = self.db.client
-            .select(("file_upload", file_thing.id))
+            .select(("file_upload", file_id))
             .await
             .map_err(|e| {
                 error!("Failed to get file: {}", e);
@@ -307,17 +304,15 @@ impl FileUploadService {
 
         // 添加筛选条件
         if let Some(space_id) = &query.space_id {
-            if let Ok(space_thing) = space_id.parse::<Thing>() {
-                sql.push_str(" AND space_id = $space_id");
-                params.push(("space_id", serde_json::Value::String(space_thing.to_string())));
-            }
+            let space_thing = Self::record_id_from_input("space", space_id);
+            sql.push_str(" AND space_id = $space_id");
+            params.push(("space_id", serde_json::Value::String(format!("space:{}", record_id_key(&space_thing)))));
         }
 
         if let Some(document_id) = &query.document_id {
-            if let Ok(doc_thing) = document_id.parse::<Thing>() {
-                sql.push_str(" AND document_id = $document_id");
-                params.push(("document_id", serde_json::Value::String(doc_thing.to_string())));
-            }
+            let doc_thing = Self::record_id_from_input("document", document_id);
+            sql.push_str(" AND document_id = $document_id");
+            params.push(("document_id", serde_json::Value::String(format!("document:{}", record_id_key(&doc_thing)))));
         }
 
         if let Some(file_type) = &query.file_type {
@@ -371,23 +366,16 @@ impl FileUploadService {
     }
 
     pub async fn delete_file(&self, user_id: &str, file_id: &str) -> Result<(), ApiError> {
-        let file_thing = file_id.parse::<Thing>()
-            .map_err(|_| ApiError::bad_request("Invalid file ID".to_string()))?;
-
         let mut file: FileUpload = self.get_file(file_id).await?;
 
         // 检查权限
         if file.uploaded_by != user_id {
             // 检查是否有空间管理权限
             if let Some(space_id) = &file.space_id {
-                let space_id_string = space_id.to_string();
-                let space_id_str = space_id_string
-                    .split(':')
-                    .nth(1)
-                    .ok_or_else(|| ApiError::internal_server_error("Invalid space ID format".to_string()))?;
+                let space_id_str = record_id_key(space_id);
                 
                 // 检查用户是否有空间的管理权限
-                match self.auth_service.check_permission(user_id, "docs.admin", Some(space_id_str)).await {
+                match self.auth_service.check_permission(user_id, "docs.admin", Some(&space_id_str)).await {
                     Ok(_) => {
                         // 用户有管理权限，可以删除
                     }
@@ -406,7 +394,7 @@ impl FileUploadService {
 
         // 更新数据库
         let _: Option<FileUpload> = self.db.client
-            .update(("file_upload", file_thing.id))
+            .update(("file_upload", file_id))
             .content(file)
             .await
             .map_err(|e| {

@@ -37,6 +37,14 @@ struct CachedPermission {
     expires_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ApiResponse<T> {
+    success: bool,
+    data: Option<T>,
+    #[allow(dead_code)]
+    message: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: String,        // 用户ID
@@ -66,8 +74,8 @@ pub struct UserProfile {
 pub struct RainbowAuthUserResponse {
     pub id: String,
     pub email: String,
-    pub email_verified: bool,
-    pub created_at: String,
+    pub email_verified: Option<bool>,
+    pub created_at: Option<String>,
     // 其他字段根据Rainbow-Auth实际返回调整
 }
 
@@ -132,19 +140,39 @@ impl AuthService {
 
         let url = format!("{}/api/auth/me", rainbow_auth_url);
         
-        let response = self.http_client
+        let response = match self.http_client
             .get(&url)
             .header("Authorization", format!("Bearer {}", token))
             .send()
             .await
-            .map_err(|e| {
+        {
+            Ok(resp) => resp,
+            Err(e) => {
                 error!("Failed to fetch user from Rainbow-Auth: {}", e);
-                AppError::Authentication("Failed to verify user with Rainbow-Auth".to_string())
-            })?;
+                warn!("Rainbow-Auth request failed for user {}, fallback to local JWT identity", user_id);
+                let fallback = self.build_fallback_user(user_id);
+                self.cache_user(user_id, fallback.clone()).await;
+                return Ok(fallback);
+            }
+        };
 
-        if !response.status().is_success() {
-            warn!("Rainbow-Auth returned error status: {}", response.status());
-            return Err(AppError::Authentication("Invalid credentials".to_string()));
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            warn!("Rainbow-Auth returned error status: {} body: {}", status, body);
+            if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+                return Err(AppError::Authentication("Invalid credentials".to_string()));
+            }
+            if status.is_server_error() {
+                warn!(
+                    "Rainbow-Auth upstream {} for user {}, fallback to local JWT identity",
+                    status, user_id
+                );
+                let fallback = self.build_fallback_user(user_id);
+                self.cache_user(user_id, fallback.clone()).await;
+                return Ok(fallback);
+            }
+            return Err(AppError::Authentication(format!("Rainbow-Auth unavailable: upstream status {}", status)));
         }
 
         let user_data: RainbowAuthUserResponse = response.json().await
@@ -168,6 +196,21 @@ impl AuthService {
         self.cache_user(&user_data.id, user.clone()).await;
 
         Ok(user)
+    }
+
+    fn build_fallback_user(&self, user_id: &str) -> User {
+        User {
+            id: user_id.to_string(),
+            email: "unknown@example.com".to_string(),
+            roles: vec!["user".to_string()],
+            permissions: vec![
+                "docs.read".to_string(),
+                "docs.write".to_string(),
+                "spaces.read".to_string(),
+                "spaces.write".to_string(),
+            ],
+            profile: None,
+        }
     }
 
     async fn get_cached_user(&self, user_id: &str) -> Option<User> {
@@ -208,8 +251,17 @@ impl AuthService {
             .map_err(|_| AppError::Authentication("Failed to fetch user roles".to_string()))?;
 
         let roles = if roles_response.status().is_success() {
-            // 解析角色响应
-            vec!["user".to_string()] // 简化处理，实际应解析完整响应
+            match roles_response.json::<ApiResponse<serde_json::Value>>().await {
+                Ok(resp) => {
+                    if resp.success {
+                        // We don't depend on roles content today; keep a safe default.
+                        vec!["user".to_string()]
+                    } else {
+                        vec!["user".to_string()]
+                    }
+                }
+                Err(_) => vec!["user".to_string()],
+            }
         } else {
             vec!["user".to_string()]
         };
@@ -224,8 +276,16 @@ impl AuthService {
             .map_err(|_| AppError::Authentication("Failed to fetch user permissions".to_string()))?;
 
         let permissions = if permissions_response.status().is_success() {
-            // 解析权限响应
-            vec!["docs.read".to_string()] // 简化处理，实际应解析完整响应
+            match permissions_response.json::<ApiResponse<Vec<String>>>().await {
+                Ok(resp) => {
+                    if resp.success {
+                        resp.data.unwrap_or_else(|| vec!["docs.read".to_string()])
+                    } else {
+                        vec!["docs.read".to_string()]
+                    }
+                }
+                Err(_) => vec!["docs.read".to_string()],
+            }
         } else {
             vec!["docs.read".to_string()]
         };

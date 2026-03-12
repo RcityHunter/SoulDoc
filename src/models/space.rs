@@ -2,10 +2,11 @@ use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use validator::Validate;
-use surrealdb::sql::Thing;
+use surrealdb::types::RecordId as Thing;
+use crate::services::database::record_id_to_string;
 
 // 用于从数据库读取的内部结构
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpaceDb {
     pub id: Option<Thing>,
     pub name: String,
@@ -219,6 +220,18 @@ lazy_static::lazy_static! {
 }
 
 impl Space {
+    fn normalize_user_id(raw: &str) -> String {
+        let trimmed = raw.trim();
+        let no_prefix = trimmed
+            .strip_prefix("user:")
+            .or_else(|| trimmed.strip_prefix("users:"))
+            .unwrap_or(trimmed)
+            .trim();
+        no_prefix
+            .trim_matches(|c| c == '⟨' || c == '⟩' || c == '"' || c == '\'' || c == '`' || c == ' ')
+            .to_string()
+    }
+
     pub fn new(name: String, slug: String, owner_id: String) -> Self {
         Self {
             id: None,
@@ -241,7 +254,7 @@ impl Space {
     }
 
     pub fn is_owner(&self, user_id: &str) -> bool {
-        self.owner_id == user_id
+        Self::normalize_user_id(&self.owner_id) == Self::normalize_user_id(user_id)
     }
 
     pub fn can_access(&self, user_id: Option<&str>) -> bool {
@@ -262,7 +275,7 @@ impl Space {
 impl From<SpaceDb> for Space {
     fn from(db: SpaceDb) -> Self {
         Self {
-            id: db.id.map(|thing| thing.to_string()),
+            id: db.id.map(|thing| record_id_to_string(&thing)),
             name: db.name,
             slug: db.slug,
             description: db.description,

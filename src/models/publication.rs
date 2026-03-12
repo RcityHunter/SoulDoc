@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-use surrealdb::sql::Thing;
+use surrealdb::types::RecordId as Thing;
 use validator::Validate;
 use std::collections::HashMap;
+use crate::services::database::record_id_to_string;
 
 /// 数据库中的空间发布记录（使用Thing类型的ID）  
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -369,7 +370,7 @@ impl UpdatePublicationRequest {
 impl From<SpacePublicationDb> for SpacePublication {
     fn from(db: SpacePublicationDb) -> Self {
         Self {
-            id: db.id.map(|thing| thing.to_string()),
+            id: db.id.map(|thing| record_id_to_string(&thing)),
             space_id: db.space_id,
             slug: db.slug,
             version: db.version,
@@ -398,7 +399,7 @@ impl From<SpacePublicationDb> for SpacePublication {
 impl From<PublicationDocumentDb> for PublicationDocument {
     fn from(db: PublicationDocumentDb) -> Self {
         Self {
-            id: db.id.map(|thing| thing.to_string()),
+            id: db.id.map(|thing| record_id_to_string(&thing)),
             publication_id: db.publication_id,
             original_doc_id: db.original_doc_id,
             title: db.title,
@@ -417,7 +418,7 @@ impl From<PublicationDocumentDb> for PublicationDocument {
 impl From<PublicationAnalyticsDb> for PublicationAnalytics {
     fn from(db: PublicationAnalyticsDb) -> Self {
         Self {
-            id: db.id.map(|thing| thing.to_string()),
+            id: db.id.map(|thing| record_id_to_string(&thing)),
             publication_id: db.publication_id,
             total_views: db.total_views,
             unique_visitors: db.unique_visitors,
@@ -433,7 +434,7 @@ impl From<PublicationAnalyticsDb> for PublicationAnalytics {
 impl From<PublicationHistoryDb> for PublicationHistory {
     fn from(db: PublicationHistoryDb) -> Self {
         Self {
-            id: db.id.map(|thing| thing.to_string()),
+            id: db.id.map(|thing| record_id_to_string(&thing)),
             publication_id: db.publication_id,
             version: db.version,
             change_summary: db.change_summary,

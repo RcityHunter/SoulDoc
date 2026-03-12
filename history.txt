@@ -1,0 +1,101 @@
+#V2
+-- SSL 证书信息
+DEFINE FIELD ssl_status ON TABLE publication_domain TYPE string DEFAULT 'pending';
+DEFINE FIELD ssl_issued_at ON TABLE publication_domain TYPE option<datetime>;
+DEFINE FIELD ssl_expires_at ON TABLE publication_domain TYPE option<datetime>;
+-- 状态
+DEFINE FIELD is_verified ON TABLE publication_domain TYPE bool DEFAULT false;
+DEFINE FIELD is_active ON TABLE publication_domain TYPE bool DEFAULT false;
+-- 时间戳
+DEFINE FIELD created_at ON TABLE publication_domain TYPE datetime DEFAULT time::now();
+DEFINE FIELD updated_at ON TABLE publication_domain TYPE datetime DEFAULT time::now();
+-- 索引
+DEFINE INDEX idx_publication_domain_publication_id ON TABLE publication_domain COLUMNS publication_id;
+DEFINE INDEX idx_publication_domain_domain ON TABLE publication_domain COLUMNS domain UNIQUE;
+-- 创建发布历史记录表（用于版本管理）
+DEFINE TABLE publication_history SCHEMAFULL;
+DEFINE FIELD id ON TABLE publication_history TYPE record<publication_history>;
+DEFINE FIELD publication_id ON TABLE publication_history TYPE string ASSERT $value != NONE;
+DEFINE FIELD version ON TABLE publication_history TYPE number ASSERT $value != NONE;
+-- 变更信息
+DEFINE FIELD change_summary ON TABLE publication_history TYPE option<string>;
+DEFINE FIELD changed_documents ON TABLE publication_history TYPE array<object> DEFAULT [];
+-- 操作信息
+DEFINE FIELD published_by ON TABLE publication_history TYPE string ASSERT $value != NONE;
+DEFINE FIELD published_at ON TABLE publication_history TYPE datetime DEFAULT time::now();
+-- 索引
+DEFINE INDEX idx_publication_history_publication_id ON TABLE publication_history COLUMNS publication_id;
+DEFINE INDEX idx_publication_history_version ON TABLE publication_history COLUMNS publication_id, version UNIQUE;
+-- 空间成员表扩展
+-- 添加到现有的docs_schema.sql中
+-- 空间成员表
+DEFINE TABLE space_member SCHEMAFULL;
+DEFINE FIELD id ON space_member TYPE record<space_member>;
+DEFINE FIELD space_id ON space_member TYPE record<space> ASSERT $value != NONE;
+DEFINE FIELD user_id ON space_member TYPE string ASSERT $value != NONE; -- Rainbow-Auth用户ID
+DEFINE FIELD role ON space_member TYPE string DEFAULT "member" ASSERT $value INSIDE ["owner", "admin", "editor", "viewer", "member"];
+DEFINE FIELD permissions ON space_member TYPE array<string> DEFAULT ["docs.read"];
+DEFINE FIELD invited_by ON space_member TYPE string ASSERT $value != NONE;
+DEFINE FIELD invited_at ON space_member TYPE datetime DEFAULT time::now();
+DEFINE FIELD accepted_at ON space_member TYPE option<datetime>;
+DEFINE FIELD status ON space_member TYPE string DEFAULT "pending" ASSERT $value INSIDE ["pending", "accepted", "rejected", "removed"];
+DEFINE FIELD expires_at ON space_member TYPE option<datetime>; -- 邀请过期时间
+DEFINE FIELD created_at ON space_member TYPE datetime DEFAULT time::now();
+DEFINE FIELD updated_at ON space_member TYPE datetime DEFAULT time::now();
+-- 空间成员索引
+DEFINE INDEX space_member_unique_idx ON space_member COLUMNS space_id, user_id UNIQUE;
+DEFINE INDEX space_member_space_idx ON space_member COLUMNS space_id;
+DEFINE INDEX space_member_user_idx ON space_member COLUMNS user_id;
+DEFINE INDEX space_member_status_idx ON space_member COLUMNS status;
+DEFINE INDEX space_member_role_idx ON space_member COLUMNS role;
+-- 空间邀请表（用于邀请链接等）
+DEFINE TABLE space_invitation SCHEMAFULL;
+DEFINE FIELD id ON space_invitation TYPE record<space_invitation>;
+DEFINE FIELD space_id ON space_invitation TYPE record<space> ASSERT $value != NONE;
+DEFINE FIELD email ON space_invitation TYPE option<string>; -- 被邀请人邮箱
+DEFINE FIELD user_id ON space_invitation TYPE option<string>; -- 被邀请人用户ID（如果已注册）
+DEFINE FIELD invite_token ON space_invitation TYPE string ASSERT $value != NONE; -- 唯一邀请令牌
+DEFINE FIELD role ON space_invitation TYPE string DEFAULT "member" ASSERT $value INSIDE ["admin", "editor", "viewer", "member"];
+DEFINE FIELD permissions ON space_invitation TYPE array<string> DEFAULT ["docs.read"];
+DEFINE FIELD invited_by ON space_invitation TYPE string ASSERT $value != NONE;
+DEFINE FIELD message ON space_invitation TYPE option<string>; -- 邀请消息
+DEFINE FIELD max_uses ON space_invitation TYPE number DEFAULT 1; -- 最大使用次数
+DEFINE FIELD used_count ON space_invitation TYPE number DEFAULT 0; -- 已使用次数
+DEFINE FIELD expires_at ON space_invitation TYPE datetime ASSERT $value != NONE;
+DEFINE FIELD created_at ON space_invitation TYPE datetime DEFAULT time::now();
+DEFINE FIELD updated_at ON space_invitation TYPE datetime DEFAULT time::now();
+-- 邀请索引
+DEFINE INDEX space_invitation_token_idx ON space_invitation COLUMNS invite_token UNIQUE;
+DEFINE INDEX space_invitation_space_idx ON space_invitation COLUMNS space_id;
+DEFINE INDEX space_invitation_inviter_idx ON space_invitation COLUMNS invited_by;
+DEFINE INDEX space_invitation_email_idx ON space_invitation COLUMNS email;
+-- =====================================
+-- 初始数据插入
+-- =====================================
+-- 插入默认标签
+INSERT INTO tag (name, slug, description, color, space_id, created_by) VALUES ("API", "api", "API相关文档", "#10b981", NONE, "system");
+INSERT INTO tag (name, slug, description, color, space_id, created_by) VALUES ("Tutorial", "tutorial", "教程文档", "#3b82f6", NONE, "system");
+INSERT INTO tag (name, slug, description, color, space_id, created_by) VALUES ("Guide", "guide", "指南文档", "#8b5cf6", NONE, "system");
+INSERT INTO tag (name, slug, description, color, space_id, created_by) VALUES ("Reference", "reference", "参考文档", "#f59e0b", NONE, "system");
+INSERT INTO tag (name, slug, description, color, space_id, created_by) VALUES ("FAQ", "faq", "常见问题", "#ef4444", NONE, "system");
+-- 设置初始使用统计
+UPDATE tag SET usage_count = 0 WHERE created_by = "system";
+-- =====================================
+-- 向量存储系统
+-- =====================================
+-- 文档向量存储表
+-- 用于存储文档的向量嵌入，支持语义搜索
+DEFINE TABLE document_vector SCHEMAFULL;
+DEFINE FIELD id ON document_vector TYPE record<document_vector>;
+DEFINE FIELD document_id ON document_vector TYPE record<document> ASSERT $value != NONE;
+DEFINE FIELD space_id ON document_vector TYPE record<space> ASSERT $value != NONE;
+DEFINE FIELD embedding ON document_vector TYPE array<float> ASSERT $value != NONE;
+DEFINE FIELD embedding_model ON document_vector TYPE string;
+DEFINE FIELD dimension ON document_vector TYPE int ASSERT $value > 0;
+DEFINE FIELD metadata ON document_vector TYPE object DEFAULT {};
+DEFINE FIELD created_at ON document_vector TYPE datetime DEFAULT time::now();
+DEFINE FIELD updated_at ON document_vector TYPE datetime DEFAULT time::now();
+-- 向量表索引
+DEFINE INDEX idx_document_vector_doc ON document_vector FIELDS document_id;
+DEFINE INDEX idx_document_vector_space ON document_vector FIELDS space_id;
+DEFINE INDEX idx_document_vector_created ON document_vector FIELDS created_at;

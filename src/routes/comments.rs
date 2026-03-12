@@ -34,7 +34,7 @@ pub struct CommentListResponse {
 pub async fn get_document_comments(
     Path(document_id): Path<String>,
     Query(query): Query<CommentQuery>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<CommentListResponse>, ApiError> {
     let comment_service = &app_state.comment_service;
@@ -67,7 +67,7 @@ pub async fn get_document_comments(
 
 pub async fn create_comment(
     Path(document_id): Path<String>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
     Json(request): Json<CreateCommentRequest>,
 ) -> Result<Json<Comment>, ApiError> {
@@ -86,7 +86,7 @@ pub async fn create_comment(
 
 pub async fn get_comment(
     Path(comment_id): Path<String>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<Comment>, ApiError> {
     let comment_service = &app_state.comment_service;
@@ -102,7 +102,7 @@ pub async fn get_comment(
 
 pub async fn update_comment(
     Path(comment_id): Path<String>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
     Json(request): Json<UpdateCommentRequest>,
 ) -> Result<Json<Comment>, ApiError> {
@@ -125,7 +125,7 @@ pub async fn update_comment(
 
 pub async fn delete_comment(
     Path(comment_id): Path<String>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<StatusCode, ApiError> {
     let comment_service = &app_state.comment_service;
@@ -146,7 +146,7 @@ pub async fn delete_comment(
 pub async fn get_comment_replies(
     Path(comment_id): Path<String>,
     Query(query): Query<CommentQuery>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<CommentListResponse>, ApiError> {
     let comment_service = &app_state.comment_service;
@@ -181,7 +181,7 @@ pub async fn get_comment_replies(
 
 pub async fn toggle_comment_like(
     Path(comment_id): Path<String>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<Comment>, ApiError> {
     let comment_service = &app_state.comment_service;
@@ -199,7 +199,7 @@ pub async fn toggle_comment_like(
     Ok(Json(updated_comment))
 }
 
-pub fn router() -> Router<Arc<crate::AppState>> {
+pub fn router() -> Router {
     Router::new()
         .route("/document/:document_id", get(get_document_comments).post(create_comment))
         .route("/:comment_id", get(get_comment).put(update_comment).delete(delete_comment))

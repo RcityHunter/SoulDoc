@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use chrono::Utc;
 use serde_json::json;
+use surrealdb::types::RecordId as Thing;
 use tracing::{info, error};
 
 use crate::{
@@ -110,16 +111,22 @@ impl NotificationService {
             where_clause
         );
 
-        let total: Option<u64> = self.db.client
+        let total_rows: Vec<serde_json::Value> = self.db.client
             .query(&count_query)
             .bind(("user_id", user_id))
             .await
             .map_err(|e| AppError::Database(e))?
-            .take("total")?;
+            .take(0)?;
+
+        let total = total_rows
+            .first()
+            .and_then(|v| v.get("total"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
 
         Ok((
             notifications.into_iter().map(Into::into).collect(),
-            total.unwrap_or(0),
+            total,
         ))
     }
 
@@ -130,12 +137,12 @@ impl NotificationService {
                 is_read = true,
                 read_at = time::now(),
                 updated_at = time::now()
-            WHERE id = type::thing('notification', $id) AND user_id = $user_id
+            WHERE id = $id AND user_id = $user_id
         "#;
 
         let mut result = self.db.client
             .query(query)
-            .bind(("id", notification_id))
+            .bind(("id", Thing::new("notification", notification_id)))
             .bind(("user_id", user_id))
             .await
             .map_err(|e| {
@@ -180,14 +187,20 @@ impl NotificationService {
     pub async fn get_unread_count(&self, user_id: &str) -> Result<u64> {
         let query = "SELECT count() as total FROM notification WHERE user_id = $user_id AND is_read = false GROUP ALL";
 
-        let total: Option<u64> = self.db.client
+        let total_rows: Vec<serde_json::Value> = self.db.client
             .query(query)
             .bind(("user_id", user_id))
             .await
             .map_err(|e| AppError::Database(e))?
-            .take("total")?;
+            .take(0)?;
 
-        Ok(total.unwrap_or(0))
+        let total = total_rows
+            .first()
+            .and_then(|v| v.get("total"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+
+        Ok(total)
     }
 
     /// 删除通知

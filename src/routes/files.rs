@@ -4,6 +4,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
+    Extension,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -16,7 +17,7 @@ use crate::{
     utils::auth::extract_user_from_header,
 };
 
-pub fn router() -> Router<Arc<crate::AppState>> {
+pub fn router() -> Router {
     Router::new()
         .route("/", get(list_files).post(upload_file))
         .route("/:file_id", get(get_file_info).delete(delete_file))
@@ -25,7 +26,7 @@ pub fn router() -> Router<Arc<crate::AppState>> {
 }
 
 async fn upload_file(
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     headers: axum::http::HeaderMap,
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -108,7 +109,7 @@ async fn upload_file(
 }
 
 async fn list_files(
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     headers: axum::http::HeaderMap,
     Query(query): Query<FileQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -121,7 +122,7 @@ async fn list_files(
 }
 
 async fn get_file_info(
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     headers: axum::http::HeaderMap,
     Path(file_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -135,7 +136,7 @@ async fn get_file_info(
 }
 
 async fn download_file(
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     headers: axum::http::HeaderMap,
     Path(file_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -157,7 +158,7 @@ async fn download_file(
 }
 
 async fn get_thumbnail(
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     headers: axum::http::HeaderMap,
     Path(file_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -176,7 +177,7 @@ async fn get_thumbnail(
 }
 
 async fn delete_file(
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     headers: axum::http::HeaderMap,
     Path(file_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {

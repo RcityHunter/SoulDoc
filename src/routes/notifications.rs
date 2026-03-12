@@ -6,12 +6,13 @@ use axum::{
     response::Json,
     routing::{get, post, put, delete},
     Router,
+    Extension,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::info;
 
-pub fn router() -> Router<Arc<crate::AppState>> {
+pub fn router() -> Router {
     Router::new()
         .route("/", get(list_notifications))
         .route("/unread-count", get(get_unread_count))
@@ -22,7 +23,7 @@ pub fn router() -> Router<Arc<crate::AppState>> {
 /// 获取通知列表
 /// GET /api/docs/notifications
 async fn list_notifications(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Query(query): Query<NotificationListQuery>,
     user: User,
 ) -> Result<Json<Value>> {
@@ -50,7 +51,7 @@ async fn list_notifications(
 /// 获取未读通知数量
 /// GET /api/docs/notifications/unread-count
 async fn get_unread_count(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     user: User,
 ) -> Result<Json<Value>> {
     let notification_service = crate::services::notification::NotificationService::new(
@@ -73,7 +74,7 @@ async fn get_unread_count(
 /// 标记通知为已读
 /// PUT /api/docs/notifications/:notification_id
 async fn mark_as_read(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(notification_id): Path<String>,
     user: User,
 ) -> Result<Json<Value>> {
@@ -99,7 +100,7 @@ async fn mark_as_read(
 /// 标记所有通知为已读
 /// POST /api/docs/notifications/mark-all-read
 async fn mark_all_as_read(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     user: User,
 ) -> Result<Json<Value>> {
     let notification_service = crate::services::notification::NotificationService::new(
@@ -124,7 +125,7 @@ async fn mark_all_as_read(
 /// 删除通知
 /// DELETE /api/docs/notifications/:notification_id
 async fn delete_notification(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(notification_id): Path<String>,
     user: User,
 ) -> Result<Json<Value>> {

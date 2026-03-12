@@ -1,8 +1,11 @@
 use std::sync::Arc;
 use axum::{
+    extract::Query,
+    response::Html,
     routing::{Router, post, get, delete},
     Extension,
 };
+use serde::Deserialize;
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use tracing::{info, warn};
@@ -154,9 +157,11 @@ async fn main() -> anyhow::Result<()> {
         search_service: search_service.clone(),
         version_service: version_service.clone(),
     };
+    let app_state = Arc::new(app_state);
 
     // 创建路由
     let mut app = Router::new()
+        .nest("/api/docs/auth", routes::auth::router())
         .nest("/api/docs/spaces", routes::spaces::router())
         .nest("/api/docs/spaces", routes::space_members::router())
         .nest("/api/docs/files", routes::files::router())
@@ -169,7 +174,7 @@ async fn main() -> anyhow::Result<()> {
         .nest("/api/docs/stats", routes::stats::router())
         .nest("/api/docs/versions", routes::versions::router())
         .nest("/api/docs", vectors_router())
-        .with_state(Arc::new(app_state));
+        .route("/sso", get(sso_bridge));
 
     // 如果是安装模式，额外添加安装路由
     #[cfg(feature = "installer")]
@@ -178,6 +183,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let app = app
+        .layer(Extension(app_state.clone()))
         .layer(Extension(shared_db))
         .layer(Extension(config.clone()))
         .layer(Extension(auth_service.clone()))
@@ -189,13 +195,59 @@ async fn main() -> anyhow::Result<()> {
         );
 
     // 启动服务器
-    let addr = "0.0.0.0:3000";
+    let addr = format!("{}:{}", config.server.host, config.server.port);
     info!("Rainbow-Docs server listening on {}", addr);
     axum::Server::bind(&addr.parse()?)
         .serve(app.into_make_service())
         .await?;
 
     Ok(())
+}
+
+#[derive(Deserialize)]
+struct SsoParams {
+    token: Option<String>,
+    next: Option<String>,
+}
+
+async fn sso_bridge(
+    Extension(state): Extension<Arc<AppState>>,
+    Query(params): Query<SsoParams>,
+) -> Html<String> {
+    let token = params.token.unwrap_or_default();
+    if token.trim().is_empty() {
+        return Html("missing token".to_string());
+    }
+    let next = params
+        .next
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| state.config.server.app_url.clone());
+    let token_js = serde_json::to_string(&token).unwrap_or_else(|_| "\"\"".into());
+    let next_js = serde_json::to_string(&next).unwrap_or_else(|_| "\"/\"".into());
+    let html = format!(
+        r#"<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>SSO Redirect</title>
+  </head>
+  <body>
+    <script>
+      const token = {token_js};
+      const next = {next_js};
+      try {{
+        localStorage.setItem('jwt_token', token);
+        localStorage.setItem('auth_token', token);
+        localStorage.setItem('token', token);
+      }} catch (e) {{
+        // ignore storage errors
+      }}
+      window.location.replace(next);
+    </script>
+  </body>
+</html>"#
+    );
+    Html(html)
 }
 
 // 自动启动数据库的函数
@@ -252,7 +304,7 @@ async fn auto_start_database(config: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn vectors_router() -> Router<Arc<AppState>> {
+fn vectors_router() -> Router {
     Router::new()
         .route("/documents/:id/vectors", post(routes::vectors::store_document_vector))
         .route("/documents/:id/vectors", get(routes::vectors::get_document_vectors))
@@ -288,4 +340,3 @@ async fn start_installer_only_mode(config: Config) -> anyhow::Result<()> {
     
     Ok(())
 }
-

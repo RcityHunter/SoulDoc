@@ -1,11 +1,11 @@
 use std::sync::Arc;
-use surrealdb::{sql::Thing, Surreal, engine::remote::ws::Client};
+use surrealdb::types::RecordId as Thing;
 use validator::Validate;
 
 use crate::{
     error::ApiError,
     models::comment::{Comment, CreateCommentRequest, UpdateCommentRequest},
-    services::{auth::AuthService, database::Database},
+    services::{auth::AuthService, database::{Database, record_id_to_string}},
 };
 
 #[derive(Clone)]
@@ -27,21 +27,21 @@ impl CommentService {
     ) -> Result<Comment, ApiError> {
         request.validate()?;
 
-        let document_thing = Thing::from(("document", document_id));
+        let document_thing = Thing::new("document", document_id);
         let parent_id = if let Some(parent_id_str) = &request.parent_id {
-            Some(Thing::from(("comment", parent_id_str.as_str())))
+            Some(Thing::new("comment", parent_id_str.as_str()))
         } else {
             None
         };
 
         let mut comment = Comment::new(
-            document_thing.to_string(),
+            record_id_to_string(&document_thing),
             author_id.to_string(),
             request.content,
         );
 
         if let Some(parent_id) = parent_id {
-            comment = comment.with_parent(parent_id.to_string());
+            comment = comment.with_parent(record_id_to_string(&parent_id));
         }
 
         let created: Vec<Comment> = self.db.client
@@ -120,7 +120,7 @@ impl CommentService {
 
         let comments: Vec<Comment> = self.db.client
             .query(query)
-            .bind(("document_id", Thing::from(("document", document_id))))
+            .bind(("document_id", Thing::new("document", document_id)))
             .bind(("limit", per_page))
             .bind(("offset", offset))
             .await
@@ -140,9 +140,9 @@ impl CommentService {
             GROUP ALL
         ";
 
-        let result: Vec<surrealdb::sql::Value> = self.db.client
+        let result: Vec<serde_json::Value> = self.db.client
             .query(query)
-            .bind(("document_id", Thing::from(("document", document_id))))
+            .bind(("document_id", Thing::new("document", document_id)))
             .await
             .map_err(|e| ApiError::DatabaseError(e.to_string()))?
             .take(0)
@@ -150,13 +150,8 @@ impl CommentService {
 
         let count = result
             .first()
-            .and_then(|v| {
-                if let Ok(n) = v.to_string().parse::<i64>() {
-                    Some(n)
-                } else {
-                    None
-                }
-            })
+            .and_then(|v| v.get("count"))
+            .and_then(|v| v.as_i64())
             .unwrap_or(0);
 
         Ok(count)
@@ -180,7 +175,7 @@ impl CommentService {
 
         let replies: Vec<Comment> = self.db.client
             .query(query)
-            .bind(("parent_id", Thing::from(("comment", parent_id))))
+            .bind(("parent_id", Thing::new("comment", parent_id)))
             .bind(("limit", per_page))
             .bind(("offset", offset))
             .await
@@ -199,9 +194,9 @@ impl CommentService {
             GROUP ALL
         ";
 
-        let result: Vec<surrealdb::sql::Value> = self.db.client
+        let result: Vec<serde_json::Value> = self.db.client
             .query(query)
-            .bind(("parent_id", Thing::from(("comment", parent_id))))
+            .bind(("parent_id", Thing::new("comment", parent_id)))
             .await
             .map_err(|e| ApiError::DatabaseError(e.to_string()))?
             .take(0)
@@ -209,13 +204,8 @@ impl CommentService {
 
         let count = result
             .first()
-            .and_then(|v| {
-                if let Ok(n) = v.to_string().parse::<i64>() {
-                    Some(n)
-                } else {
-                    None
-                }
-            })
+            .and_then(|v| v.get("count"))
+            .and_then(|v| v.as_i64())
             .unwrap_or(0);
 
         Ok(count)
@@ -253,7 +243,7 @@ impl CommentService {
 
         let thread: Vec<Comment> = self.db.client
             .query(query)
-            .bind(("comment_id", Thing::from(("comment", comment_id))))
+            .bind(("comment_id", Thing::new("comment", comment_id)))
             .await
             .map_err(|e| ApiError::DatabaseError(e.to_string()))?
             .take(0)
@@ -282,7 +272,7 @@ impl CommentService {
 
         let comments: Vec<Comment> = self.db.client
             .query(search_query)
-            .bind(("document_id", Thing::from(("document", document_id))))
+            .bind(("document_id", Thing::new("document", document_id)))
             .bind(("query", query))
             .bind(("limit", per_page))
             .bind(("offset", offset))

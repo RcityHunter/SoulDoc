@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use surrealdb::sql::Thing;
+use surrealdb::types::RecordId as Thing;
 use std::time::Instant;
 
 use crate::{
@@ -8,7 +8,7 @@ use crate::{
         SearchIndex, SearchRequest, SearchResult, SearchResponse, 
         SearchSortBy, SearchHighlight
     },
-    services::{auth::AuthService, database::Database},
+    services::{auth::AuthService, database::{Database, record_id_to_string}},
 };
 
 #[derive(Clone)]
@@ -127,8 +127,8 @@ impl SearchService {
             let score = self.calculate_relevance_score(&index, &request.query);
             
             results.push(SearchResult {
-                document_id: index.document_id.to_string(),
-                space_id: index.space_id.to_string(),
+                document_id: record_id_to_string(&index.document_id),
+                space_id: record_id_to_string(&index.space_id),
                 title: index.title,
                 excerpt: index.excerpt,
                 tags: index.tags,
@@ -197,7 +197,7 @@ impl SearchService {
             db_query = db_query.bind((key, value));
         }
 
-        let result: Vec<surrealdb::sql::Value> = db_query
+        let result: Vec<serde_json::Value> = db_query
             .await
             .map_err(|e| ApiError::Database(e))?
             .take(0)
@@ -205,7 +205,8 @@ impl SearchService {
 
         let count = result
             .first()
-            .and_then(|v| v.to_string().parse::<i64>().ok())
+            .and_then(|v| v.get("count"))
+            .and_then(|v| v.as_i64())
             .unwrap_or(0);
 
         Ok(count)
@@ -337,8 +338,8 @@ impl SearchService {
         is_public: bool,
     ) -> Result<(), ApiError> {
         let index = SearchIndex::new(
-            Thing::from(("document", document_id)),
-            Thing::from(("space", space_id)),
+            Thing::new("document", document_id),
+            Thing::new("space", space_id),
             title.to_string(),
             content.to_string(),
             excerpt.to_string(),
@@ -358,7 +359,7 @@ impl SearchService {
             WHERE is_deleted = false
         ";
 
-        let documents: Vec<surrealdb::sql::Value> = self.db.client
+        let documents: Vec<serde_json::Value> = self.db.client
             .query(query)
             .await
             .map_err(|e| ApiError::Database(e))?
@@ -368,7 +369,7 @@ impl SearchService {
         let mut indexed_count = 0;
 
         for doc in documents {
-            if let Ok(doc_obj) = surrealdb::sql::Object::try_from(doc) {
+            if let Some(_doc_obj) = doc.as_object() {
                 // 提取文档信息并创建索引
                 // 这里需要根据实际的文档结构来解析
                 indexed_count += 1;

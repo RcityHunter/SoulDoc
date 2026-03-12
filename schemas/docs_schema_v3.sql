@@ -8,7 +8,6 @@
 
 -- 文档空间表 (类似GitBook的Space)
 DEFINE TABLE space SCHEMAFULL;
-DEFINE FIELD id ON space TYPE record<space>;
 DEFINE FIELD name ON space TYPE string ASSERT $value != NONE AND string::len($value) > 0 AND string::len($value) <= 255;
 DEFINE FIELD slug ON space TYPE string ASSERT $value != NONE AND string::len($value) > 0 AND string::len($value) <= 100;
 DEFINE FIELD description ON space TYPE option<string>;
@@ -35,7 +34,6 @@ DEFINE INDEX space_deleted_idx ON space COLUMNS is_deleted;
 
 -- 文档表
 DEFINE TABLE document SCHEMAFULL;
-DEFINE FIELD id ON document TYPE record<document>;
 DEFINE FIELD space_id ON document TYPE record<space> ASSERT $value != NONE;
 DEFINE FIELD title ON document TYPE string ASSERT $value != NONE AND string::len($value) > 0 AND string::len($value) <= 255;
 DEFINE FIELD slug ON document TYPE string ASSERT $value != NONE AND string::len($value) > 0 AND string::len($value) <= 100;
@@ -74,7 +72,6 @@ DEFINE INDEX document_order_idx ON document COLUMNS space_id, parent_id, order_i
 
 -- 文档版本表
 DEFINE TABLE document_version SCHEMAFULL;
-DEFINE FIELD id ON document_version TYPE record<document_version>;
 DEFINE FIELD document_id ON document_version TYPE record<document> ASSERT $value != NONE;
 DEFINE FIELD version_number ON document_version TYPE number ASSERT $value != NONE AND $value > 0;
 DEFINE FIELD title ON document_version TYPE string ASSERT $value != NONE;
@@ -95,7 +92,6 @@ DEFINE INDEX version_author_idx ON document_version COLUMNS author_id;
 
 -- 文档权限表 (扩展Rainbow-Auth的RBAC)
 DEFINE TABLE document_permission SCHEMAFULL;
-DEFINE FIELD id ON document_permission TYPE record<document_permission>;
 DEFINE FIELD resource_type ON document_permission TYPE string DEFAULT "Document" ASSERT $value INSIDE ["Space", "Document", "Comment"];
 DEFINE FIELD resource_id ON document_permission TYPE string ASSERT $value != NONE;
 DEFINE FIELD user_id ON document_permission TYPE option<string>;
@@ -114,7 +110,6 @@ DEFINE INDEX permission_expires_idx ON document_permission COLUMNS expires_at;
 
 -- 评论表
 DEFINE TABLE comment SCHEMAFULL;
-DEFINE FIELD id ON comment TYPE record<comment>;
 DEFINE FIELD document_id ON comment TYPE record<document> ASSERT $value != NONE;
 DEFINE FIELD parent_id ON comment TYPE option<record<comment>>; -- 回复支持
 DEFINE FIELD author_id ON comment TYPE string ASSERT $value != NONE;
@@ -144,7 +139,6 @@ DEFINE INDEX comment_resolved_idx ON comment COLUMNS is_resolved;
 
 -- 标签表
 DEFINE TABLE tag SCHEMAFULL;
-DEFINE FIELD id ON tag TYPE record<tag>;
 DEFINE FIELD name ON tag TYPE string ASSERT $value != NONE AND string::len($value) > 0 AND string::len($value) <= 50;
 DEFINE FIELD slug ON tag TYPE string ASSERT $value != NONE AND string::len($value) > 0 AND string::len($value) <= 50;
 DEFINE FIELD description ON tag TYPE string;
@@ -162,7 +156,6 @@ DEFINE INDEX tag_usage_idx ON tag COLUMNS usage_count;
 
 -- 文档标签关联表
 DEFINE TABLE document_tag SCHEMAFULL;
-DEFINE FIELD id ON document_tag TYPE record<document_tag>;
 DEFINE FIELD document_id ON document_tag TYPE record<document> ASSERT $value != NONE;
 DEFINE FIELD tag_id ON document_tag TYPE record<tag> ASSERT $value != NONE;
 DEFINE FIELD tagged_by ON document_tag TYPE string ASSERT $value != NONE;
@@ -179,7 +172,6 @@ DEFINE INDEX document_tag_tag_idx ON document_tag COLUMNS tag_id;
 
 -- 搜索索引表 (全文搜索)
 DEFINE TABLE search_index SCHEMAFULL;
-DEFINE FIELD id ON search_index TYPE record<search_index>;
 DEFINE FIELD document_id ON search_index TYPE record<document> ASSERT $value != NONE;
 DEFINE FIELD space_id ON search_index TYPE record<space> ASSERT $value != NONE;
 DEFINE FIELD title ON search_index TYPE string;
@@ -202,7 +194,6 @@ DEFINE INDEX search_author_idx ON search_index COLUMNS author_id;
 
 -- 用户收藏表
 DEFINE TABLE user_favorite SCHEMAFULL;
-DEFINE FIELD id ON user_favorite TYPE record<user_favorite>;
 DEFINE FIELD user_id ON user_favorite TYPE string ASSERT $value != NONE;
 DEFINE FIELD resource_type ON user_favorite TYPE string DEFAULT "document" ASSERT $value INSIDE ["document", "space"];
 DEFINE FIELD resource_id ON user_favorite TYPE string ASSERT $value != NONE;
@@ -214,7 +205,6 @@ DEFINE INDEX favorite_user_idx ON user_favorite COLUMNS user_id;
 
 -- 文档访问记录表
 DEFINE TABLE document_view SCHEMAFULL;
-DEFINE FIELD id ON document_view TYPE record<document_view>;
 DEFINE FIELD document_id ON document_view TYPE record<document> ASSERT $value != NONE;
 DEFINE FIELD user_id ON document_view TYPE string ASSERT $value != NONE;
 DEFINE FIELD ip_address ON document_view TYPE string;
@@ -233,7 +223,6 @@ DEFINE INDEX view_date_idx ON document_view COLUMNS viewed_at;
 
 -- 活动日志表
 DEFINE TABLE activity_log SCHEMAFULL;
-DEFINE FIELD id ON activity_log TYPE record<activity_log>;
 DEFINE FIELD user_id ON activity_log TYPE string ASSERT $value != NONE;
 DEFINE FIELD action ON activity_log TYPE string ASSERT $value != NONE;
 DEFINE FIELD resource_type ON activity_log TYPE string ASSERT $value INSIDE ["space", "document", "comment", "tag", "version"];
@@ -255,7 +244,6 @@ DEFINE INDEX activity_action_idx ON activity_log COLUMNS action;
 
 -- 文件上传表
 DEFINE TABLE file_upload SCHEMAFULL;
-DEFINE FIELD id ON file_upload TYPE record<file_upload>;
 DEFINE FIELD filename ON file_upload TYPE string ASSERT $value != NONE;
 DEFINE FIELD original_name ON file_upload TYPE string ASSERT $value != NONE;
 DEFINE FIELD file_path ON file_upload TYPE string ASSERT $value != NONE;
@@ -283,7 +271,6 @@ DEFINE INDEX file_type_idx ON file_upload COLUMNS file_type;
 
 -- 通知表
 DEFINE TABLE notification SCHEMAFULL;
-DEFINE FIELD id ON notification TYPE record<notification>;
 DEFINE FIELD user_id ON notification TYPE string ASSERT $value != NONE;
 DEFINE FIELD type ON notification TYPE string ASSERT $value INSIDE ["space_invitation", "document_shared", "comment_mention", "document_update", "system"];
 DEFINE FIELD title ON notification TYPE string ASSERT $value != NONE;
@@ -314,7 +301,6 @@ DEFINE INDEX notification_invite_token_idx ON notification COLUMNS invite_token;
 -- 存储每次发布的快照信息
 DEFINE TABLE space_publication SCHEMAFULL;
 
-DEFINE FIELD id ON TABLE space_publication TYPE record<space_publication>;
 DEFINE FIELD space_id ON TABLE space_publication TYPE string ASSERT $value != NONE;
 DEFINE FIELD slug ON TABLE space_publication TYPE string ASSERT $value != NONE;
 DEFINE FIELD version ON TABLE space_publication TYPE number DEFAULT 1;
@@ -352,7 +338,6 @@ DEFINE INDEX idx_space_publication_active ON TABLE space_publication COLUMNS is_
 -- 存储发布时文档的完整快照
 DEFINE TABLE publication_document SCHEMAFULL;
 
-DEFINE FIELD id ON TABLE publication_document TYPE record<publication_document>;
 DEFINE FIELD publication_id ON TABLE publication_document TYPE string ASSERT $value != NONE;
 DEFINE FIELD original_doc_id ON TABLE publication_document TYPE string ASSERT $value != NONE;
 
@@ -382,7 +367,6 @@ DEFINE INDEX idx_publication_document_slug ON TABLE publication_document COLUMNS
 -- 发布访问统计表
 DEFINE TABLE publication_analytics SCHEMAFULL;
 
-DEFINE FIELD id ON TABLE publication_analytics TYPE record<publication_analytics>;
 DEFINE FIELD publication_id ON TABLE publication_analytics TYPE string ASSERT $value != NONE;
 
 -- 访问统计
@@ -406,7 +390,6 @@ DEFINE INDEX idx_publication_analytics_publication_id ON TABLE publication_analy
 -- 自定义域名表
 DEFINE TABLE publication_domain SCHEMAFULL;
 
-DEFINE FIELD id ON TABLE publication_domain TYPE record<publication_domain>;
 DEFINE FIELD publication_id ON TABLE publication_domain TYPE string ASSERT $value != NONE;
 DEFINE FIELD domain ON TABLE publication_domain TYPE string ASSERT $value != NONE;
 
@@ -430,7 +413,6 @@ DEFINE INDEX idx_publication_domain_domain ON TABLE publication_domain COLUMNS d
 -- 创建发布历史记录表（用于版本管理）
 DEFINE TABLE publication_history SCHEMAFULL;
 
-DEFINE FIELD id ON TABLE publication_history TYPE record<publication_history>;
 DEFINE FIELD publication_id ON TABLE publication_history TYPE string ASSERT $value != NONE;
 DEFINE FIELD version ON TABLE publication_history TYPE number ASSERT $value != NONE;
 
@@ -453,7 +435,6 @@ DEFINE INDEX idx_publication_history_version ON TABLE publication_history COLUMN
 
 -- 空间成员表
 DEFINE TABLE space_member SCHEMAFULL;
-DEFINE FIELD id ON space_member TYPE record<space_member>;
 DEFINE FIELD space_id ON space_member TYPE record<space> ASSERT $value != NONE;
 DEFINE FIELD user_id ON space_member TYPE string ASSERT $value != NONE; -- Rainbow-Auth用户ID
 DEFINE FIELD role ON space_member TYPE string DEFAULT "member" ASSERT $value INSIDE ["owner", "admin", "editor", "viewer", "member"];
@@ -475,7 +456,6 @@ DEFINE INDEX space_member_role_idx ON space_member COLUMNS role;
 
 -- 空间邀请表（用于邀请链接等）
 DEFINE TABLE space_invitation SCHEMAFULL;
-DEFINE FIELD id ON space_invitation TYPE record<space_invitation>;
 DEFINE FIELD space_id ON space_invitation TYPE record<space> ASSERT $value != NONE;
 DEFINE FIELD email ON space_invitation TYPE option<string>; -- 被邀请人邮箱
 DEFINE FIELD user_id ON space_invitation TYPE option<string>; -- 被邀请人用户ID（如果已注册）
@@ -517,7 +497,6 @@ UPDATE tag SET usage_count = 0 WHERE created_by = "system";
 -- 文档向量存储表
 -- 用于存储文档的向量嵌入，支持语义搜索
 DEFINE TABLE document_vector SCHEMAFULL;
-DEFINE FIELD id ON document_vector TYPE record<document_vector>;
 DEFINE FIELD document_id ON document_vector TYPE record<document> ASSERT $value != NONE;
 DEFINE FIELD space_id ON document_vector TYPE record<space> ASSERT $value != NONE;
 DEFINE FIELD embedding ON document_vector TYPE array<float> ASSERT $value != NONE;

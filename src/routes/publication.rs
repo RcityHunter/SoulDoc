@@ -10,6 +10,7 @@ use axum::{
     response::Json,
     routing::{get, post, put, delete},
     Router,
+    Extension,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -17,7 +18,7 @@ use std::sync::Arc;
 use tracing::{info, warn};
 
 /// 发布相关的路由
-pub fn router() -> Router<Arc<AppState>> {
+pub fn router() -> Router {
     Router::new()
         // 管理端点（需要认证）
         .route("/spaces/:space_id/publish", post(publish_space))
@@ -40,7 +41,7 @@ pub fn router() -> Router<Arc<AppState>> {
 /// 发布空间
 /// POST /api/docs/publications/spaces/:space_id/publish
 async fn publish_space(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(space_id): Path<String>,
     user: User,
     Json(request): Json<CreatePublicationRequest>,
@@ -81,7 +82,7 @@ async fn publish_space(
 /// 获取空间的发布列表
 /// GET /api/docs/publications/spaces/:space_id/publications
 async fn list_publications(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(space_id): Path<String>,
     Query(params): Query<ListPublicationsQuery>,
     user: User,
@@ -112,7 +113,7 @@ async fn list_publications(
 /// 更新发布
 /// PUT /api/docs/publications/publications/:publication_id
 async fn update_publication(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(publication_id): Path<String>,
     user: User,
     Json(request): Json<UpdatePublicationRequest>,
@@ -143,7 +144,7 @@ async fn update_publication(
 /// 重新发布（更新内容）
 /// POST /api/docs/publications/publications/:publication_id/republish
 async fn republish(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(publication_id): Path<String>,
     user: User,
     Json(request): Json<RepublishRequest>,
@@ -174,7 +175,7 @@ async fn republish(
 /// 取消发布
 /// POST /api/docs/publications/publications/:publication_id/unpublish
 async fn unpublish(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(publication_id): Path<String>,
     user: User,
 ) -> Result<Json<Value>> {
@@ -200,7 +201,7 @@ async fn unpublish(
 /// 删除发布
 /// DELETE /api/docs/publications/publications/:publication_id
 async fn delete_publication(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(publication_id): Path<String>,
     user: User,
 ) -> Result<Json<Value>> {
@@ -229,7 +230,7 @@ async fn delete_publication(
 /// 获取发布详情（预览模式）
 /// GET /api/docs/publications/publications/:publication_id
 async fn get_publication_preview(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(publication_id): Path<String>,
     user: User,
 ) -> Result<Json<Value>> {
@@ -271,7 +272,7 @@ async fn get_publication_preview(
 /// 获取发布的文档树（预览模式）
 /// GET /api/docs/publications/publications/:publication_id/tree
 async fn get_publication_tree_preview(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(publication_id): Path<String>,
     user: User,
 ) -> Result<Json<Value>> {
@@ -295,7 +296,7 @@ async fn get_publication_tree_preview(
 /// 获取发布的文档内容（预览模式）
 /// GET /api/docs/publications/publications/:publication_id/docs/:doc_slug
 async fn get_publication_document_preview(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path((publication_id, doc_slug)): Path<(String, String)>,
     user: User,
 ) -> Result<Json<Value>> {
@@ -321,7 +322,7 @@ async fn get_publication_document_preview(
 /// 获取发布详情（公开访问）
 /// GET /api/docs/publications/p/:slug
 async fn get_publication(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(slug): Path<String>,
 ) -> Result<Json<Value>> {
     let publication = app_state.publication_service.get_publication_by_slug(&slug).await?;
@@ -355,7 +356,7 @@ async fn get_publication(
 /// 获取发布的文档树（公开访问）
 /// GET /api/docs/publications/p/:slug/tree
 async fn get_publication_tree(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(slug): Path<String>,
 ) -> Result<Json<Value>> {
     // 先获取发布信息
@@ -377,7 +378,7 @@ async fn get_publication_tree(
 /// 获取发布的文档内容（公开访问）
 /// GET /api/docs/publications/p/:slug/docs/:doc_slug
 async fn get_publication_document(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path((slug, doc_slug)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     // 先获取发布信息

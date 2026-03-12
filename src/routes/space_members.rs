@@ -7,12 +7,13 @@ use axum::{
     response::Json,
     routing::{get, post, put, delete},
     Router,
+    Extension,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::{info, warn};
 
-pub fn router() -> Router<Arc<crate::AppState>> {
+pub fn router() -> Router {
     Router::new()
         .route("/:space_slug/members", get(list_members))
         .route("/:space_slug/invite", post(invite_member))
@@ -23,7 +24,7 @@ pub fn router() -> Router<Arc<crate::AppState>> {
 /// 获取空间成员列表
 /// GET /api/docs/spaces/:space_slug/members
 async fn list_members(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(space_slug): Path<String>,
     user: User,
 ) -> Result<Json<Value>> {
@@ -42,7 +43,7 @@ async fn list_members(
 /// 邀请新成员
 /// POST /api/docs/spaces/:space_slug/invite  
 async fn invite_member(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path(space_slug): Path<String>,
     user: User,
     Json(request): Json<InviteMemberRequest>,
@@ -64,7 +65,7 @@ async fn invite_member(
 /// 接受邀请
 /// POST /api/docs/spaces/invitations/accept
 async fn accept_invitation(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     user: User,
     Json(request): Json<AcceptInvitationRequest>,
 ) -> Result<Json<Value>> {
@@ -82,7 +83,7 @@ async fn accept_invitation(
 /// 更新成员权限
 /// PUT /api/docs/spaces/:space_slug/members/:user_id
 async fn update_member(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path((space_slug, member_user_id)): Path<(String, String)>,
     user: User,
     Json(request): Json<UpdateMemberRequest>,
@@ -104,7 +105,7 @@ async fn update_member(
 /// 移除成员
 /// DELETE /api/docs/spaces/:space_slug/members/:user_id
 async fn remove_member(
-    State(app_state): State<Arc<AppState>>,
+    Extension(app_state): Extension<Arc<AppState>>,
     Path((space_slug, member_user_id)): Path<(String, String)>,
     user: User,
 ) -> Result<Json<Value>> {

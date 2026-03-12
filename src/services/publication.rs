@@ -6,7 +6,7 @@ use crate::{
         document::{Document, DocumentTreeNode},
     },
 };
-use surrealdb::sql::Thing;
+use surrealdb::types::RecordId as Thing;
 use chrono::Utc;
 use std::sync::Arc;
 use tracing::{info, warn, error};
@@ -396,7 +396,7 @@ impl PublicationService {
     /// 获取 Thing 类型的 publication_id
     fn get_publication_thing(&self, publication_id: &str) -> Thing {
         let clean_id = publication_id.strip_prefix("space_publication:").unwrap_or(publication_id);
-        Thing::from(("space_publication", clean_id))
+        Thing::new("space_publication", clean_id)
     }
 
     /// 检查slug是否已存在
@@ -488,7 +488,7 @@ impl PublicationService {
 
         let mut result = self.db.client
             .query(query)
-            .bind(("space_id", Thing::from(("space", clean_space_id))))
+            .bind(("space_id", Thing::new("space", clean_space_id)))
             .await
             .map_err(|e| ApiError::DatabaseError(e.to_string()))?;
 
@@ -611,7 +611,7 @@ impl PublicationService {
         
         let publications_db: Option<SpacePublicationDb> = self.db.client
             .query("SELECT * FROM $id WHERE is_deleted = false")
-            .bind(("id", Thing::from(("space_publication", clean_id))))
+            .bind(("id", Thing::new("space_publication", clean_id)))
             .await
             .map_err(|e| ApiError::DatabaseError(e.to_string()))?
             .take(0)

@@ -45,7 +45,7 @@ pub struct ReindexResponse {
 
 pub async fn search_documents(
     Query(query): Query<SearchQuery>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<SearchResponse>, ApiError> {
     let search_service = &app_state.search_service;
@@ -86,7 +86,7 @@ pub async fn search_documents(
 
 pub async fn search_suggestions(
     Query(query): Query<SuggestQuery>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<SuggestResponse>, ApiError> {
     let search_service = &app_state.search_service;
@@ -107,7 +107,7 @@ pub async fn search_suggestions(
 }
 
 pub async fn reindex_documents(
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<ReindexResponse>, ApiError> {
     let search_service = &app_state.search_service;
@@ -128,7 +128,7 @@ pub async fn reindex_documents(
 pub async fn search_within_space(
     axum::extract::Path(space_id): axum::extract::Path<String>,
     Query(mut query): Query<SearchQuery>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<SearchResponse>, ApiError> {
     let search_service = &app_state.search_service;
@@ -170,7 +170,7 @@ pub async fn search_within_space(
 
 pub async fn search_by_tags(
     Query(query): Query<SearchQuery>,
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     Extension(user_id): Extension<String>,
 ) -> Result<Json<SearchResponse>, ApiError> {
     let search_service = &app_state.search_service;
@@ -204,7 +204,7 @@ pub async fn search_by_tags(
     Ok(Json(response))
 }
 
-pub fn router() -> Router<Arc<crate::AppState>> {
+pub fn router() -> Router {
     Router::new()
         .route("/", get(search_documents))
         .route("/suggest", get(search_suggestions))

@@ -3,6 +3,7 @@ use axum::{
     response::Json,
     routing::get,
     Router,
+    Extension,
 };
 use serde::Serialize;
 use std::sync::Arc;
@@ -52,7 +53,7 @@ pub struct SpaceActivity {
 }
 
 pub async fn get_search_stats(
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     _user: User,
 ) -> Result<Json<serde_json::Value>> {
     // 暂时返回模拟数据
@@ -94,7 +95,7 @@ pub async fn get_search_stats(
 }
 
 pub async fn get_document_stats(
-    State(app_state): State<Arc<crate::AppState>>,
+    Extension(app_state): Extension<Arc<crate::AppState>>,
     _user: User,
 ) -> Result<Json<serde_json::Value>> {
     let db = &app_state.db.client;
@@ -219,7 +220,7 @@ pub async fn get_document_stats(
     })))
 }
 
-pub fn router() -> Router<Arc<crate::AppState>> {
+pub fn router() -> Router {
     Router::new()
         .route("/search", get(get_search_stats))
         .route("/documents", get(get_document_stats))

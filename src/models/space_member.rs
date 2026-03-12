@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use validator::Validate;
-use surrealdb::sql::Thing;
+use surrealdb::types::RecordId as Thing;
+use crate::services::database::{record_id_key, record_id_to_string};
 
 // 用于从数据库读取的内部结构
 #[derive(Debug, Clone, Deserialize)]
@@ -199,8 +200,8 @@ pub struct AcceptInvitationRequest {
 impl From<SpaceMemberDb> for SpaceMember {
     fn from(db: SpaceMemberDb) -> Self {
         Self {
-            id: db.id.map(|thing| thing.id.to_string()),
-            space_id: db.space_id.id.to_string(),
+            id: db.id.map(|thing| record_id_to_string(&thing)),
+            space_id: record_id_key(&db.space_id),
             user_id: db.user_id,
             role: db.role,
             permissions: db.permissions,
@@ -235,8 +236,8 @@ impl From<SpaceMember> for SpaceMemberResponse {
 impl From<SpaceInvitationDb> for SpaceInvitation {
     fn from(db: SpaceInvitationDb) -> Self {
         Self {
-            id: db.id.map(|thing| thing.id.to_string()),
-            space_id: db.space_id.id.to_string(),
+            id: db.id.map(|thing| record_id_to_string(&thing)),
+            space_id: record_id_key(&db.space_id),
             email: db.email,
             user_id: db.user_id,
             invite_token: db.invite_token,
