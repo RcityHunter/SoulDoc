@@ -3,12 +3,12 @@ use crate::error::{AppError, Result};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value as JsonValue};
-use soulcore::engines::storage::IndexedResults;
 use std::any::TypeId;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use surrealdb::types::{RecordId as Thing, RecordIdKey};
+use surrealdb::types::{RecordId as Thing, RecordIdKey, Value as SurrealValue};
+use surrealdb::IndexedResults;
 use tracing::{error, info};
 
 /// 客户端包装器，提供完全兼容的 SurrealDB API
@@ -78,17 +78,21 @@ impl Response {
     ) -> std::result::Result<T, surrealdb::Error> {
         match index.into() {
             TakeIndex::Statement(idx) => {
-                let raw = self
+                let raw: SurrealValue = self
                     .inner
                     .take(idx)
                     .map_err(|e| surrealdb::Error::thrown(e.to_string()))?;
+                let raw =
+                    serde_json::to_value(raw).map_err(|e| surrealdb::Error::thrown(e.to_string()))?;
                 decode_take_value::<T>(raw)
             }
             TakeIndex::Field(stmt_idx, field) => {
-                let raw = self
+                let raw: SurrealValue = self
                     .inner
                     .take(stmt_idx)
                     .map_err(|e| surrealdb::Error::thrown(e.to_string()))?;
+                let raw =
+                    serde_json::to_value(raw).map_err(|e| surrealdb::Error::thrown(e.to_string()))?;
                 let extracted = raw.get(&field).cloned().unwrap_or(serde_json::Value::Null);
                 decode_take_value::<T>(extracted)
             }
@@ -357,9 +361,11 @@ impl ClientWrapper {
                     .await
                     .map_err(|e| surrealdb::Error::thrown(e.to_string()))?;
 
-                let raw = res
+                let raw: SurrealValue = res
                     .take(0)
                     .map_err(|e| surrealdb::Error::thrown(e.to_string()))?;
+                let raw =
+                    serde_json::to_value(raw).map_err(|e| surrealdb::Error::thrown(e.to_string()))?;
                 let rows: Vec<serde_json::Value> = match raw {
                     serde_json::Value::Array(arr) => arr,
                     serde_json::Value::Null => vec![],
@@ -417,7 +423,7 @@ impl ClientWrapper {
                 ));
             }
         };
-        let storage_id = soulcore::engines::storage::RecordId::new(table, id);
+        let storage_id = Thing::new(table, id);
 
         let deleted: Option<serde_json::Value> = self
             .storage
@@ -692,7 +698,7 @@ where
                     ));
                 }
             };
-            let storage_id = soulcore::engines::storage::RecordId::new(table, id);
+            let storage_id = Thing::new(table, id);
 
             let payload = serde_json::to_value(self.content)
                 .map_err(|e| surrealdb::Error::thrown(e.to_string()))?;
