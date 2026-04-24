@@ -38,8 +38,15 @@ impl DocumentService {
          string::replace(type::string(space_id), 'space:', '') AS space_id, \
          title, slug, content, excerpt, is_public, status, \
          (IF parent_id = NONE THEN NONE ELSE string::replace(type::string(parent_id), 'document:', '') END) AS parent_id, \
-         order_index, author_id, last_editor_id, view_count, word_count, reading_time, \
-         (metadata ?? {}) AS metadata, updated_by, is_deleted, deleted_at, deleted_by, created_at, updated_at"
+         order_index, \
+         (IF author_id = NONE THEN '' ELSE type::string(author_id) END) AS author_id, \
+         (IF last_editor_id = NONE THEN NONE ELSE type::string(last_editor_id) END) AS last_editor_id, \
+         view_count, word_count, reading_time, \
+         (metadata ?? {}) AS metadata, \
+         (IF updated_by = NONE THEN NONE ELSE type::string(updated_by) END) AS updated_by, \
+         is_deleted, deleted_at, \
+         (IF deleted_by = NONE THEN NONE ELSE type::string(deleted_by) END) AS deleted_by, \
+         created_at, updated_at"
     }
 
     fn normalize_status(status: Option<&str>, is_public: bool) -> String {
