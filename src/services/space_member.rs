@@ -80,6 +80,10 @@ impl SpaceMemberService {
 
         let actual_space_id = normalize_space_id(space_id);
         let space_id_candidates = space_id_match_candidates(space_id);
+        let space_id_plain = space_id_candidates[0].clone();
+        let space_id_bracketed = space_id_candidates[1].clone();
+        let space_id_prefixed = space_id_candidates[2].clone();
+        let space_id_nested = space_id_candidates[3].clone();
 
         // 检查是否为空间所有者（数据库内比较，避免反序列化形态差异）
         let user_id_bracketed = format!("user:⟨{}⟩", clean_user_id);
@@ -118,7 +122,7 @@ impl SpaceMemberService {
         let member_query = r#"
             SELECT count() AS count
             FROM space_member
-            WHERE type::string(space_id) INSIDE $space_id_candidates
+            WHERE type::string(space_id) IN [$space_id_plain, $space_id_bracketed, $space_id_prefixed, $space_id_nested]
               AND type::string(user_id) IN [$user_id_bracketed, $user_id_plain, $user_id_raw]
               AND status = 'accepted'
             GROUP ALL
@@ -127,7 +131,10 @@ impl SpaceMemberService {
             .db
             .client
             .query(member_query)
-            .bind(("space_id_candidates", space_id_candidates))
+            .bind(("space_id_plain", space_id_plain))
+            .bind(("space_id_bracketed", space_id_bracketed))
+            .bind(("space_id_prefixed", space_id_prefixed))
+            .bind(("space_id_nested", space_id_nested))
             .bind(("user_id_bracketed", user_id_bracketed))
             .bind(("user_id_plain", user_id_plain))
             .bind(("user_id_raw", clean_user_id.clone()))
@@ -158,6 +165,10 @@ impl SpaceMemberService {
     ) -> Result<bool> {
         let actual_space_id = normalize_space_id(space_id);
         let space_id_candidates = space_id_match_candidates(space_id);
+        let space_id_plain = space_id_candidates[0].clone();
+        let space_id_bracketed = space_id_candidates[1].clone();
+        let space_id_prefixed = space_id_candidates[2].clone();
+        let space_id_nested = space_id_candidates[3].clone();
 
         // 清理user_id格式，确保和数据库存储格式一致
         let clean_user_id = clean_user_id_format(user_id);
@@ -204,7 +215,7 @@ impl SpaceMemberService {
         let member_query = r#"
             SELECT role, permissions
             FROM space_member
-            WHERE type::string(space_id) INSIDE $space_id_candidates
+            WHERE type::string(space_id) IN [$space_id_plain, $space_id_bracketed, $space_id_prefixed, $space_id_nested]
               AND type::string(user_id) IN [$user_id_bracketed, $user_id_plain, $user_id_raw]
               AND status = 'accepted'
         "#;
@@ -212,7 +223,10 @@ impl SpaceMemberService {
             .db
             .client
             .query(member_query)
-            .bind(("space_id_candidates", space_id_candidates))
+            .bind(("space_id_plain", space_id_plain))
+            .bind(("space_id_bracketed", space_id_bracketed))
+            .bind(("space_id_prefixed", space_id_prefixed))
+            .bind(("space_id_nested", space_id_nested))
             .bind(("user_id_bracketed", user_id_bracketed))
             .bind(("user_id_plain", user_id_plain))
             .bind(("user_id_raw", clean_user_id.clone()))
