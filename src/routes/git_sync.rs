@@ -1,4 +1,4 @@
-use axum::{
+﻿use axum::{
     extract::Path,
     response::Json,
     routing::{delete, get, post, put},
@@ -159,7 +159,7 @@ async fn trigger_sync(
         "CREATE git_sync_log SET
             repo_id = $repo_id,
             triggered_by = $uid,
-            direction = 'souldoc_to_github',
+            direction = 'soulbook_to_github',
             status = 'pending',
             created_at = $now",
     )

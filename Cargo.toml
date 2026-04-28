@@ -19,7 +19,7 @@ base64 = "0.21"
 # surrealdb types only - connection is via soulcore/reqwest
 surrealdb = { version = "3.0.0", default-features = false }
 # 使用soulcore替代直接的数据库操作
-soulcore = { path = "C:/Users/DELL/Desktop/SoulDoc-main/soulcore", default-features = false, features = ["storage", "surrealdb-http"] }
+soulcore = { path = "../soulcore", default-features = false, features = ["storage", "surrealdb-http"] }
 
 # 认证相关 (与Rainbow-Auth相同版本，用于JWT验证)
 jsonwebtoken = "8.3"

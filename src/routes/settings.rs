@@ -1,4 +1,4 @@
-use axum::{
+﻿use axum::{
     response::Json,
     routing::{get, put},
     Extension, Router,
@@ -34,7 +34,7 @@ async fn get_settings(
     let settings = items.into_iter().next().unwrap_or_else(|| {
         json!({
             "general": {
-                "platform_name": "SoulDoc",
+                "platform_name": "SoulBook",
                 "default_language": "zh-CN",
                 "timezone": "Asia/Shanghai",
                 "default_visibility": "private"
