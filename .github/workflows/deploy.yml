@@ -1,0 +1,27 @@
+name: Deploy SoulBook Backend
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: soulbook-backend-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start backend deployment on server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SOULBOOK_HOST }}
+          username: root
+          key: ${{ secrets.SOULBOOK_SSH_KEY }}
+          command_timeout: 2m
+          script: |
+            set -e
+            nohup /root/soulhub/deploy_soulbook.sh >/tmp/soulbook-backend-deploy-trigger.log 2>&1 &
+            echo "backend deployment started; check /tmp/soulbook-backend-deploy.log on the server"
