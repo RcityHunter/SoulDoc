@@ -7,6 +7,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
+use tracing::warn;
 
 use crate::{error::Result, services::auth::User, AppState};
 
@@ -37,13 +38,22 @@ async fn list_tool_configs(
     _user: User,
 ) -> Result<Json<Value>> {
     let db = &app_state.db.client;
-    let mut result = db
+    let mut items = match db
         .query("SELECT * FROM tool_config ORDER BY created_at ASC")
         .await
-        .map_err(|e| crate::error::ApiError::DatabaseError(e.to_string()))?;
-    let mut items: Vec<Value> = result
-        .take(0)
-        .map_err(|e| crate::error::ApiError::DatabaseError(e.to_string()))?;
+    {
+        Ok(mut result) => match result.take::<Vec<Value>>(0) {
+            Ok(items) => items,
+            Err(e) => {
+                warn!("failed to parse tool configs: {}", e);
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            warn!("failed to query tool configs: {}", e);
+            Vec::new()
+        }
+    };
 
     // seed defaults if empty
     if items.is_empty() {
@@ -219,4 +229,18 @@ fn default_tool_configs() -> Vec<Value> {
             "actions": ["generate_report", "analyze_quality"]
         }),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_tool_configs_match_frontend_contract() {
+        let items = default_tool_configs();
+        assert!(!items.is_empty());
+        assert_eq!(items[0]["id"], "tool_config:content");
+        assert!(items.iter().any(|item| item["family"] == "seo"));
+        assert!(items[0].get("actions").and_then(Value::as_array).is_some());
+    }
 }
