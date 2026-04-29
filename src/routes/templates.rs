@@ -7,6 +7,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
+use tracing::warn;
 
 use crate::{error::Result, services::auth::User, AppState};
 
@@ -37,13 +38,22 @@ async fn list_templates(
     _user: User,
 ) -> Result<Json<Value>> {
     let db = &app_state.db.client;
-    let mut result = db
+    let mut items = match db
         .query("SELECT * FROM doc_template WHERE is_deleted = false ORDER BY usage_count DESC")
         .await
-        .map_err(|e| crate::error::ApiError::DatabaseError(e.to_string()))?;
-    let mut items: Vec<Value> = result
-        .take(0)
-        .map_err(|e| crate::error::ApiError::DatabaseError(e.to_string()))?;
+    {
+        Ok(mut result) => match result.take::<Vec<Value>>(0) {
+            Ok(items) => items,
+            Err(e) => {
+                warn!("failed to parse templates, using defaults: {}", e);
+                default_templates()
+            }
+        },
+        Err(e) => {
+            warn!("failed to query templates, using defaults: {}", e);
+            default_templates()
+        }
+    };
 
     if items.is_empty() {
         items = default_templates();
@@ -58,15 +68,21 @@ async fn get_template(
     _user: User,
 ) -> Result<Json<Value>> {
     let db = &app_state.db.client;
-    let item: Option<Value> = db
-        .select(("doc_template", id.as_str()))
-        .await
-        .map_err(|e| crate::error::ApiError::DatabaseError(e.to_string()))?;
+    let item: Option<Value> = match db.select(("doc_template", id.as_str())).await {
+        Ok(item) => item,
+        Err(e) => {
+            warn!("failed to query template {}, falling back to defaults: {}", id, e);
+            None
+        }
+    };
     match item {
         Some(v) => Ok(Json(json!({ "success": true, "data": v }))),
-        None => Err(crate::error::ApiError::NotFound(
-            "Template not found".into(),
-        )),
+        None => match find_default_template(&id) {
+            Some(v) => Ok(Json(json!({ "success": true, "data": v }))),
+            None => Err(crate::error::ApiError::NotFound(
+                "Template not found".into(),
+            )),
+        },
     }
 }
 
@@ -153,17 +169,24 @@ async fn use_template(
 ) -> Result<Json<Value>> {
     let db = &app_state.db.client;
     let now = chrono::Utc::now().to_rfc3339();
-    db.query("UPDATE $id SET usage_count += 1, updated_at = $now")
+    if let Err(e) = db
+        .query("UPDATE $id SET usage_count += 1, updated_at = $now")
         .bind(("id", format!("doc_template:{}", id)))
         .bind(("now", &now))
         .await
-        .map_err(|e| crate::error::ApiError::DatabaseError(e.to_string()))?;
+    {
+        warn!("failed to update template usage for {}: {}", id, e);
+    }
 
-    let item: Option<Value> = db
-        .select(("doc_template", id.as_str()))
-        .await
-        .map_err(|e| crate::error::ApiError::DatabaseError(e.to_string()))?;
-    Ok(Json(json!({ "success": true, "data": item })))
+    let item: Option<Value> = match db.select(("doc_template", id.as_str())).await {
+        Ok(item) => item,
+        Err(e) => {
+            warn!("failed to query used template {}, falling back to defaults: {}", id, e);
+            None
+        }
+    };
+    let data = item.or_else(|| find_default_template(&id));
+    Ok(Json(json!({ "success": true, "data": data })))
 }
 
 async fn list_categories(
@@ -233,4 +256,15 @@ fn default_templates() -> Vec<Value> {
             "content": "# 运营报告\n\n## 数据概览\n\n## 核心指标\n\n## 总结与展望\n"
         }),
     ]
+}
+
+fn find_default_template(id: &str) -> Option<Value> {
+    let normalized = id.trim_start_matches("doc_template:");
+    default_templates().into_iter().find(|template| {
+        template
+            .get("id")
+            .and_then(|value| value.as_str())
+            .map(|value| value.trim_start_matches("doc_template:") == normalized)
+            .unwrap_or(false)
+    })
 }
