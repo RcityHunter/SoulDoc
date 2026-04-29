@@ -418,7 +418,7 @@ impl ClientWrapper {
                 ));
             }
         };
-        let storage_id = soulcore::engines::storage::RecordId { table, id };
+        let storage_id = Thing::new(table, id);
 
         let deleted: Option<serde_json::Value> = self
             .storage
@@ -693,7 +693,7 @@ where
                     ));
                 }
             };
-            let storage_id = soulcore::engines::storage::RecordId { table, id };
+            let storage_id = Thing::new(table, id);
 
             let payload = serde_json::to_value(self.content)
                 .map_err(|e| surrealdb::Error::thrown(e.to_string()))?;

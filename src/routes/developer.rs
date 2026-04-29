@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{AppState, error::Result, services::auth::User};
+use crate::{AppState, error::Result, services::auth::User, utils::auth::require_admin};
 
 pub fn router() -> Router {
     Router::new()
@@ -285,8 +285,10 @@ async fn get_manifest(Extension(_app_state): Extension<Arc<AppState>>) -> Json<V
 
 async fn list_agent_requests(
     Extension(app_state): Extension<Arc<AppState>>,
-    _user: User,
+    user: User,
 ) -> Result<Json<Value>> {
+    require_admin(&user)?;
+
     let db = &app_state.db.client;
     let mut result = db
         .query("SELECT * FROM agent_registration ORDER BY created_at DESC")
@@ -303,6 +305,8 @@ async fn approve_agent_request(
     Path(reg_id): Path<String>,
     user: User,
 ) -> Result<Json<Value>> {
+    require_admin(&user)?;
+
     let db = &app_state.db.client;
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -432,6 +436,8 @@ async fn reject_agent_request(
     user: User,
     Json(body): Json<RejectRequest>,
 ) -> Result<Json<Value>> {
+    require_admin(&user)?;
+
     let db = &app_state.db.client;
     let now = chrono::Utc::now().to_rfc3339();
     let reason = body.reason.as_deref().unwrap_or("").to_string();
@@ -458,9 +464,8 @@ async fn reject_agent_request(
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn sha256_hex(input: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut h = DefaultHasher::new();
-    input.hash(&mut h);
-    format!("{:016x}{:016x}", h.finish(), h.finish())
+    use sha2::{Digest, Sha256};
+
+    let digest = Sha256::digest(input.as_bytes());
+    format!("{:x}", digest)
 }
