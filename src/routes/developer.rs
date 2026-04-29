@@ -8,6 +8,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use uuid::Uuid;
+use tracing::warn;
 
 use crate::{AppState, error::Result, services::auth::User, utils::auth::require_admin};
 
@@ -48,14 +49,24 @@ async fn list_api_keys(
     user: User,
 ) -> Result<Json<Value>> {
     let db = &app_state.db.client;
-    let mut result = db
+    let items = match db
         .query("SELECT id, name, key_prefix, scopes, created_at, last_used_at, expires_at FROM api_key WHERE created_by = $uid AND is_deleted = false ORDER BY created_at DESC")
         .bind(("uid", &user.id))
         .await
-        .map_err(|e| crate::error::ApiError::DatabaseError(e.to_string()))?;
-    let items: Vec<Value> = result
-        .take(0)
-        .map_err(|e| crate::error::ApiError::DatabaseError(e.to_string()))?;
+    {
+        Ok(mut result) => match result.take::<Vec<Value>>(0) {
+            Ok(items) => items,
+            Err(e) => {
+                warn!("failed to parse api keys for user {}: {}", user.id, e);
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            warn!("failed to query api keys for user {}: {}", user.id, e);
+            Vec::new()
+        }
+    };
+
     Ok(Json(json!({ "success": true, "data": { "items": items } })))
 }
 
@@ -127,14 +138,24 @@ async fn list_webhooks(
     user: User,
 ) -> Result<Json<Value>> {
     let db = &app_state.db.client;
-    let mut result = db
+    let items = match db
         .query("SELECT * FROM webhook WHERE created_by = $uid AND is_deleted = false ORDER BY created_at DESC")
         .bind(("uid", &user.id))
         .await
-        .map_err(|e| crate::error::ApiError::DatabaseError(e.to_string()))?;
-    let items: Vec<Value> = result
-        .take(0)
-        .map_err(|e| crate::error::ApiError::DatabaseError(e.to_string()))?;
+    {
+        Ok(mut result) => match result.take::<Vec<Value>>(0) {
+            Ok(items) => items,
+            Err(e) => {
+                warn!("failed to parse webhooks for user {}: {}", user.id, e);
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            warn!("failed to query webhooks for user {}: {}", user.id, e);
+            Vec::new()
+        }
+    };
+
     Ok(Json(json!({ "success": true, "data": { "items": items } })))
 }
 
@@ -239,14 +260,24 @@ async fn webhook_logs(
     _user: User,
 ) -> Result<Json<Value>> {
     let db = &app_state.db.client;
-    let mut result = db
+    let items = match db
         .query("SELECT * FROM webhook_log WHERE webhook_id = $id ORDER BY created_at DESC LIMIT 50")
         .bind(("id", format!("webhook:{}", id)))
         .await
-        .map_err(|e| crate::error::ApiError::DatabaseError(e.to_string()))?;
-    let items: Vec<Value> = result
-        .take(0)
-        .map_err(|e| crate::error::ApiError::DatabaseError(e.to_string()))?;
+    {
+        Ok(mut result) => match result.take::<Vec<Value>>(0) {
+            Ok(items) => items,
+            Err(e) => {
+                warn!("failed to parse webhook logs for {}: {}", id, e);
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            warn!("failed to query webhook logs for {}: {}", id, e);
+            Vec::new()
+        }
+    };
+
     Ok(Json(json!({ "success": true, "data": { "items": items } })))
 }
 
@@ -255,13 +286,23 @@ async fn list_ai_users(
     _user: User,
 ) -> Result<Json<Value>> {
     let db = &app_state.db.client;
-    let mut result = db
+    let items = match db
         .query("SELECT id, username, display_name, email, avatar_url, created_at FROM user WHERE is_ai = true AND is_deleted = false ORDER BY created_at DESC")
         .await
-        .map_err(|e| crate::error::ApiError::DatabaseError(e.to_string()))?;
-    let items: Vec<Value> = result
-        .take(0)
-        .map_err(|e| crate::error::ApiError::DatabaseError(e.to_string()))?;
+    {
+        Ok(mut result) => match result.take::<Vec<Value>>(0) {
+            Ok(items) => items,
+            Err(e) => {
+                warn!("failed to parse ai users: {}", e);
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            warn!("failed to query ai users: {}", e);
+            Vec::new()
+        }
+    };
+
     Ok(Json(json!({ "success": true, "data": { "items": items } })))
 }
 
@@ -290,13 +331,23 @@ async fn list_agent_requests(
     require_admin(&user)?;
 
     let db = &app_state.db.client;
-    let mut result = db
+    let items = match db
         .query("SELECT * FROM agent_registration ORDER BY created_at DESC")
         .await
-        .map_err(|e| crate::error::ApiError::DatabaseError(e.to_string()))?;
-    let items: Vec<Value> = result
-        .take(0)
-        .map_err(|e| crate::error::ApiError::DatabaseError(e.to_string()))?;
+    {
+        Ok(mut result) => match result.take::<Vec<Value>>(0) {
+            Ok(items) => items,
+            Err(e) => {
+                warn!("failed to parse agent registration requests: {}", e);
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            warn!("failed to query agent registration requests: {}", e);
+            Vec::new()
+        }
+    };
+
     Ok(Json(json!({ "success": true, "data": { "items": items } })))
 }
 
