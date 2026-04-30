@@ -4,7 +4,9 @@ use axum::{
     response::Html,
     routing::{Router, delete, get, post},
 };
-use serde::Deserialize;
+use chrono::{Duration as ChronoDuration, Utc};
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::time::{Duration, interval};
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
@@ -22,6 +24,7 @@ mod utils;
 
 use crate::{
     config::Config,
+    error::AppError,
     services::{
         auth::AuthService, comments::CommentService, database::Database,
         documents::DocumentService, file_upload::FileUploadService,
@@ -264,22 +267,25 @@ fn build_cors_layer() -> CorsLayer {
 
 #[derive(Deserialize)]
 struct SsoParams {
+    bridge: Option<String>,
     token: Option<String>,
-    next: Option<String>,
 }
 
 async fn sso_bridge(
     Extension(state): Extension<Arc<AppState>>,
     Query(params): Query<SsoParams>,
 ) -> Html<String> {
-    let token = params.token.unwrap_or_default();
-    if token.trim().is_empty() {
-        return Html("missing token".to_string());
-    }
-    let next = params
-        .next
-        .map(|value| sanitize_sso_next(Some(value), &state.config.server.app_url))
-        .unwrap_or_else(|| state.config.server.app_url.clone());
+    let payload = match resolve_sso_bridge_payload(
+        params.bridge,
+        params.token,
+        &state.config.server.app_url,
+        &state.config.auth.jwt_secret,
+    ) {
+        Ok(payload) => payload,
+        Err(message) => return Html(message.to_string()),
+    };
+    let token = payload.token;
+    let next = payload.next;
     let token_js = serde_json::to_string(&token).unwrap_or_else(|_| "\"\"".into());
     let next_js = serde_json::to_string(&next).unwrap_or_else(|_| "\"/\"".into());
     let html = format!(
@@ -312,7 +318,83 @@ async fn sso_bridge(
     Html(html)
 }
 
-fn sanitize_sso_next(next: Option<String>, default: &str) -> String {
+const SSO_BRIDGE_PURPOSE: &str = "soulbook_sso_bridge";
+const SSO_BRIDGE_TTL_SECONDS: i64 = 60;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SsoBridgeClaims {
+    token: String,
+    next: String,
+    purpose: String,
+    exp: i64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct SsoBridgePayload {
+    token: String,
+    next: String,
+}
+
+pub(crate) fn create_sso_bridge_token(
+    token: &str,
+    next: Option<String>,
+    default_next: &str,
+    secret: &str,
+) -> std::result::Result<String, AppError> {
+    if token.trim().is_empty() {
+        return Err(AppError::BadRequest("missing token".into()));
+    }
+
+    let claims = SsoBridgeClaims {
+        token: token.to_string(),
+        next: sanitize_sso_next(next, default_next),
+        purpose: SSO_BRIDGE_PURPOSE.to_string(),
+        exp: (Utc::now() + ChronoDuration::seconds(SSO_BRIDGE_TTL_SECONDS)).timestamp(),
+    };
+
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_ref()),
+    )
+    .map_err(|e| AppError::Internal(anyhow::anyhow!("sso bridge encode failed: {}", e)))
+}
+
+fn resolve_sso_bridge_payload(
+    bridge: Option<String>,
+    raw_token: Option<String>,
+    default_next: &str,
+    secret: &str,
+) -> std::result::Result<SsoBridgePayload, &'static str> {
+    if raw_token.is_some() && bridge.is_none() {
+        return Err("missing or invalid bridge");
+    }
+
+    let bridge = bridge
+        .filter(|value| !value.trim().is_empty())
+        .ok_or("missing or invalid bridge")?;
+    let claims = decode::<SsoBridgeClaims>(
+        &bridge,
+        &DecodingKey::from_secret(secret.as_ref()),
+        &Validation::default(),
+    )
+    .map_err(|_| "missing or invalid bridge")?
+    .claims;
+
+    if claims.purpose != SSO_BRIDGE_PURPOSE
+        || claims.token.trim().is_empty()
+        || claims.exp <= Utc::now().timestamp()
+    {
+        return Err("missing or invalid bridge");
+    }
+
+    Ok(SsoBridgePayload {
+        token: claims.token,
+        next: sanitize_sso_next(Some(claims.next), default_next),
+    })
+}
+
+pub(crate) fn sanitize_sso_next(next: Option<String>, default: &str) -> String {
     let Some(next) = next else {
         return default.to_string();
     };
@@ -476,5 +558,66 @@ mod tests {
                 "https://book.test"
             );
         }
+    }
+
+    #[test]
+    fn sso_bridge_token_round_trip_preserves_token_and_next() {
+        let bridge = create_sso_bridge_token(
+            "jwt-value",
+            Some("/docs/space".to_string()),
+            "https://book.test",
+            "test-secret",
+        )
+        .expect("bridge should encode");
+
+        let payload = resolve_sso_bridge_payload(
+            Some(bridge),
+            None,
+            "https://book.test",
+            "test-secret",
+        )
+        .expect("bridge should decode");
+
+        assert_eq!(payload.token, "jwt-value");
+        assert_eq!(payload.next, "/docs/space");
+    }
+
+    #[test]
+    fn sso_raw_token_without_bridge_is_rejected() {
+        let err = resolve_sso_bridge_payload(
+            None,
+            Some("attacker-token".to_string()),
+            "https://book.test",
+            "test-secret",
+        )
+        .expect_err("raw token should be rejected");
+
+        assert_eq!(err, "missing or invalid bridge");
+    }
+
+    #[test]
+    fn sso_expired_bridge_token_is_rejected() {
+        let claims = SsoBridgeClaims {
+            token: "jwt-value".to_string(),
+            next: "/docs".to_string(),
+            purpose: SSO_BRIDGE_PURPOSE.to_string(),
+            exp: (chrono::Utc::now() - chrono::Duration::seconds(1)).timestamp(),
+        };
+        let expired_bridge = jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &claims,
+            &jsonwebtoken::EncodingKey::from_secret("test-secret".as_ref()),
+        )
+        .expect("expired bridge should encode");
+
+        let err = resolve_sso_bridge_payload(
+            Some(expired_bridge),
+            None,
+            "https://book.test",
+            "test-secret",
+        )
+        .expect_err("expired bridge should be rejected");
+
+        assert_eq!(err, "missing or invalid bridge");
     }
 }

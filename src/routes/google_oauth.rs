@@ -231,13 +231,16 @@ async fn callback(
     .map_err(|e| AppError::Internal(anyhow::anyhow!("jwt encode failed: {}", e)))?;
 
     // Step 5: redirect to /sso bridge — it will inject token into localStorage
-    let next = state_claims
-        .next
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| app_state.config.server.app_url.clone());
+    let next = crate::sanitize_sso_next(state_claims.next, &app_state.config.server.app_url);
+    let bridge = crate::create_sso_bridge_token(
+        &token,
+        Some(next.clone()),
+        &app_state.config.server.app_url,
+        &app_state.config.auth.jwt_secret,
+    )?;
     let sso_url = format!(
-        "/sso?token={}&next={}",
-        urlencoding::encode(&token),
+        "/sso?bridge={}&next={}",
+        urlencoding::encode(&bridge),
         urlencoding::encode(&next),
     );
 
