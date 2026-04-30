@@ -47,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
     // 初始化日志
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
-            "rainbow_docs=debug,tower_http=debug",
+            "soulbook=debug,rainbow_docs=debug,tower_http=debug",
         ))
         .with(tracing_subscriber::fmt::layer())
         .init();
