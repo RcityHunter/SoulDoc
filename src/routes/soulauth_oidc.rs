@@ -121,6 +121,14 @@ async fn callback(
     headers: HeaderMap,
     Query(params): Query<CallbackParams>,
 ) -> Result<Response> {
+    tracing::info!(
+        has_code = params.code.is_some(),
+        has_state = params.state.is_some(),
+        has_error = params.error.is_some(),
+        has_cookie_header = headers.get(COOKIE).is_some(),
+        "SoulAuth OIDC callback received"
+    );
+
     if params.error.is_some() {
         let login_url = format!("/docs/login?error={}", safe_login_error());
         if let Some(state_token) = params.state.as_deref() {
@@ -141,7 +149,15 @@ async fn callback(
         .state
         .ok_or_else(|| AppError::BadRequest("missing state".into()))?;
     let state_claims = decode_state(&state_token, &app_state.config.auth.jwt_secret)?;
+    tracing::info!(
+        next = state_claims.next.as_deref().unwrap_or(""),
+        "SoulAuth OIDC state decoded"
+    );
     let login_cookie = login_cookie_from_headers(&headers, &app_state.config.auth.jwt_secret)?;
+    tracing::info!(
+        has_login_cookie = login_cookie.is_some(),
+        "SoulAuth OIDC login cookie decoded"
+    );
     let login_cookie = validate_login_cookie(login_cookie, &state_claims)?;
 
     let oauth = app_state
@@ -168,7 +184,17 @@ async fn callback(
         .map_err(|e| AppError::Internal(anyhow::anyhow!("SoulAuth token request failed: {}", e)))?;
 
     if !token_resp.status().is_success() {
-        return Err(AppError::BadRequest("SoulAuth login failed".into()));
+        let status = token_resp.status();
+        let body = token_resp.text().await.unwrap_or_default();
+        tracing::warn!(
+            status = %status,
+            body_len = body.len(),
+            body = %body.chars().take(256).collect::<String>(),
+            "SoulAuth OIDC token exchange failed"
+        );
+        return Err(AppError::BadRequest(format!(
+            "SoulAuth login failed: token exchange returned {status}"
+        )));
     }
 
     let token_json: TokenResponse = token_resp
@@ -193,7 +219,17 @@ async fn callback(
         })?;
 
     if !userinfo_resp.status().is_success() {
-        return Err(AppError::BadRequest("SoulAuth login failed".into()));
+        let status = userinfo_resp.status();
+        let body = userinfo_resp.text().await.unwrap_or_default();
+        tracing::warn!(
+            status = %status,
+            body_len = body.len(),
+            body = %body.chars().take(256).collect::<String>(),
+            "SoulAuth OIDC userinfo failed"
+        );
+        return Err(AppError::BadRequest(format!(
+            "SoulAuth login failed: userinfo returned {status}"
+        )));
     }
 
     let userinfo: UserInfo = userinfo_resp.json().await.map_err(|e| {
