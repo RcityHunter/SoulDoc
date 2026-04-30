@@ -204,11 +204,10 @@ async fn callback(
     let token = issue_soulbook_token(&app_state, &user_id)?;
     let next = crate::sanitize_sso_next(state_claims.next, &app_state.config.server.app_url);
     let bridge_binding = crate::create_sso_bridge_binding();
-    let bridge = crate::create_sso_bridge_token(
+    let bridge = crate::create_sso_bridge_handle(
         &token,
         Some(next.clone()),
         &app_state.config.server.app_url,
-        &app_state.config.auth.jwt_secret,
         &bridge_binding,
     )?;
     let sso_url = format!(
@@ -587,7 +586,10 @@ mod tests {
             sanitize_next(Some("/docs/login?tab=oidc#top".to_string()), "/"),
             "/docs/login?tab=oidc#top"
         );
-        assert_eq!(sanitize_next(Some("/search?q=a".to_string()), "/"), "/search?q=a");
+        assert_eq!(
+            sanitize_next(Some("/search?q=a".to_string()), "/"),
+            "/search?q=a"
+        );
     }
 
     #[test]

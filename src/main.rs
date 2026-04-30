@@ -1,18 +1,20 @@
 use axum::{
-    Extension,
     extract::Query,
     http::{
-        HeaderMap,
         header::{COOKIE, SET_COOKIE},
+        HeaderMap,
     },
     response::{Html, IntoResponse, Response},
-    routing::{Router, delete, get, post},
+    routing::{delete, get, post, Router},
+    Extension,
 };
 use chrono::{Duration as ChronoDuration, Utc};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tokio::time::{Duration, interval};
+use serde::Deserialize;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
+use tokio::time::{interval, Duration};
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -231,9 +233,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(Extension(shared_db))
         .layer(Extension(config.clone()))
         .layer(Extension(auth_service.clone()))
-        .layer(
-            build_cors_layer(),
-        );
+        .layer(build_cors_layer());
 
     // 启动服务器
     let addr = format!("{}:{}", config.server.host, config.server.port);
@@ -248,7 +248,10 @@ async fn main() -> anyhow::Result<()> {
 /// Build CORS layer from `CORS_ALLOWED_ORIGINS` env var.
 /// Empty/unset → allow any origin (dev fallback). Comma-separated list → strict whitelist.
 fn build_cors_layer() -> CorsLayer {
-    let allow_origin = match std::env::var("CORS_ALLOWED_ORIGINS").ok().filter(|s| !s.trim().is_empty()) {
+    let allow_origin = match std::env::var("CORS_ALLOWED_ORIGINS")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+    {
         Some(raw) => {
             let origins: Vec<_> = raw
                 .split(',')
@@ -287,7 +290,6 @@ async fn sso_bridge(
         params.token,
         binding_cookie,
         &state.config.server.app_url,
-        &state.config.auth.jwt_secret,
     ) {
         Ok(payload) => payload,
         Err(message) => return html_with_clear_sso_bridge_cookie(message.to_string()),
@@ -331,8 +333,8 @@ const SSO_BRIDGE_TTL_SECONDS: i64 = 60;
 const SSO_BRIDGE_COOKIE_NAME: &str = "soulbook_sso_bridge_binding";
 const SSO_BRIDGE_COOKIE_PATH: &str = "/sso";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SsoBridgeClaims {
+#[derive(Debug, Clone)]
+struct SsoBridgeEntry {
     token: String,
     next: String,
     purpose: String,
@@ -346,11 +348,14 @@ struct SsoBridgePayload {
     next: String,
 }
 
-pub(crate) fn create_sso_bridge_token(
+lazy_static::lazy_static! {
+    static ref SSO_BRIDGE_STORE: Mutex<HashMap<String, SsoBridgeEntry>> = Mutex::new(HashMap::new());
+}
+
+pub(crate) fn create_sso_bridge_handle(
     token: &str,
     next: Option<String>,
     default_next: &str,
-    secret: &str,
     binding: &str,
 ) -> std::result::Result<String, AppError> {
     if token.trim().is_empty() {
@@ -360,7 +365,10 @@ pub(crate) fn create_sso_bridge_token(
         return Err(AppError::BadRequest("missing bridge binding".into()));
     }
 
-    let claims = SsoBridgeClaims {
+    cleanup_expired_sso_bridge_entries(Utc::now().timestamp());
+
+    let handle = Uuid::new_v4().simple().to_string();
+    let entry = SsoBridgeEntry {
         token: token.to_string(),
         next: sanitize_sso_next(next, default_next),
         purpose: SSO_BRIDGE_PURPOSE.to_string(),
@@ -368,12 +376,12 @@ pub(crate) fn create_sso_bridge_token(
         exp: (Utc::now() + ChronoDuration::seconds(SSO_BRIDGE_TTL_SECONDS)).timestamp(),
     };
 
-    encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(secret.as_ref()),
-    )
-    .map_err(|e| AppError::Internal(anyhow::anyhow!("sso bridge encode failed: {}", e)))
+    SSO_BRIDGE_STORE
+        .lock()
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("sso bridge store poisoned")))?
+        .insert(handle.clone(), entry);
+
+    Ok(handle)
 }
 
 fn resolve_sso_bridge_payload(
@@ -381,43 +389,66 @@ fn resolve_sso_bridge_payload(
     raw_token: Option<String>,
     binding_cookie: Option<String>,
     default_next: &str,
-    secret: &str,
 ) -> std::result::Result<SsoBridgePayload, &'static str> {
-    if raw_token.is_some() && bridge.is_none() {
+    if raw_token.is_some() {
         return Err("missing or invalid bridge");
     }
 
     let bridge = bridge
         .filter(|value| !value.trim().is_empty())
         .ok_or("missing or invalid bridge")?;
-    let claims = decode::<SsoBridgeClaims>(
-        &bridge,
-        &DecodingKey::from_secret(secret.as_ref()),
-        &Validation::default(),
-    )
-    .map_err(|_| "missing or invalid bridge")?
-    .claims;
 
-    if claims.purpose != SSO_BRIDGE_PURPOSE
-        || claims.token.trim().is_empty()
-        || claims.binding.trim().is_empty()
-        || claims.exp <= Utc::now().timestamp()
+    let now = Utc::now().timestamp();
+    let mut store = SSO_BRIDGE_STORE
+        .lock()
+        .map_err(|_| "missing or invalid bridge")?;
+    let Some(entry) = store.get(&bridge) else {
+        return Err("missing or invalid bridge");
+    };
+
+    if entry.exp <= now {
+        store.remove(&bridge);
+        return Err("missing or invalid bridge");
+    }
+
+    if entry.purpose != SSO_BRIDGE_PURPOSE
+        || entry.token.trim().is_empty()
+        || entry.binding.trim().is_empty()
     {
+        store.remove(&bridge);
         return Err("missing or invalid bridge");
     }
 
-    if binding_cookie.as_deref() != Some(claims.binding.as_str()) {
+    if binding_cookie.as_deref() != Some(entry.binding.as_str()) {
         return Err("missing or invalid bridge");
     }
+
+    let entry = store.remove(&bridge).ok_or("missing or invalid bridge")?;
 
     Ok(SsoBridgePayload {
-        token: claims.token,
-        next: sanitize_sso_next(Some(claims.next), default_next),
+        token: entry.token,
+        next: sanitize_sso_next(Some(entry.next), default_next),
     })
 }
 
 pub(crate) fn create_sso_bridge_binding() -> String {
-    Uuid::new_v4().to_string()
+    Uuid::new_v4().simple().to_string()
+}
+
+fn cleanup_expired_sso_bridge_entries(now: i64) {
+    if let Ok(mut store) = SSO_BRIDGE_STORE.lock() {
+        store.retain(|_, entry| entry.exp > now);
+    }
+}
+
+#[cfg(test)]
+fn insert_test_sso_bridge_entry(entry: SsoBridgeEntry) -> String {
+    let handle = Uuid::new_v4().simple().to_string();
+    SSO_BRIDGE_STORE
+        .lock()
+        .expect("sso bridge store should lock")
+        .insert(handle.clone(), entry);
+    handle
 }
 
 pub(crate) fn sso_bridge_binding_cookie(binding: &str) -> String {
@@ -626,9 +657,7 @@ async fn start_installer_only_mode(config: Config) -> anyhow::Result<()> {
     let app = Router::new()
         .nest("/api/install", installer_routes())
         .layer(Extension(config))
-        .layer(
-            build_cors_layer(),
-        );
+        .layer(build_cors_layer());
 
     // 启动服务器
     let addr = "0.0.0.0:3000";
@@ -703,23 +732,17 @@ mod tests {
     #[test]
     fn sso_bridge_with_matching_binding_cookie_is_accepted() {
         let binding = create_sso_bridge_binding();
-        let bridge = create_sso_bridge_token(
+        let bridge = create_sso_bridge_handle(
             "jwt-value",
             Some("/docs/space".to_string()),
             "https://book.test",
-            "test-secret",
             &binding,
         )
-        .expect("bridge should encode");
+        .expect("bridge should be stored");
 
-        let payload = resolve_sso_bridge_payload(
-            Some(bridge),
-            None,
-            Some(binding),
-            "https://book.test",
-            "test-secret",
-        )
-        .expect("bridge should decode");
+        let payload =
+            resolve_sso_bridge_payload(Some(bridge), None, Some(binding), "https://book.test")
+                .expect("bridge should resolve");
 
         assert_eq!(payload.token, "jwt-value");
         assert_eq!(payload.next, "/docs/space");
@@ -728,23 +751,17 @@ mod tests {
     #[test]
     fn sso_bridge_nested_sso_next_falls_back_to_app_default() {
         let binding = create_sso_bridge_binding();
-        let bridge = create_sso_bridge_token(
+        let bridge = create_sso_bridge_handle(
             "jwt-value",
             Some("/sso?bridge=attacker".to_string()),
             "https://book.test",
-            "test-secret",
             &binding,
         )
-        .expect("bridge should encode");
+        .expect("bridge should be stored");
 
-        let payload = resolve_sso_bridge_payload(
-            Some(bridge),
-            None,
-            Some(binding),
-            "https://book.test",
-            "test-secret",
-        )
-        .expect("bridge should decode");
+        let payload =
+            resolve_sso_bridge_payload(Some(bridge), None, Some(binding), "https://book.test")
+                .expect("bridge should resolve");
 
         assert_eq!(payload.token, "jwt-value");
         assert_eq!(payload.next, "https://book.test");
@@ -757,7 +774,6 @@ mod tests {
             Some("attacker-token".to_string()),
             None,
             "https://book.test",
-            "test-secret",
         )
         .expect_err("raw token should be rejected");
 
@@ -765,27 +781,20 @@ mod tests {
     }
 
     #[test]
-    fn sso_expired_bridge_token_is_rejected() {
-        let claims = SsoBridgeClaims {
+    fn sso_expired_bridge_handle_is_rejected() {
+        let bridge = insert_test_sso_bridge_entry(SsoBridgeEntry {
             token: "jwt-value".to_string(),
             next: "/docs".to_string(),
             purpose: SSO_BRIDGE_PURPOSE.to_string(),
             binding: "binding-value".to_string(),
             exp: (chrono::Utc::now() - chrono::Duration::seconds(1)).timestamp(),
-        };
-        let expired_bridge = jsonwebtoken::encode(
-            &jsonwebtoken::Header::default(),
-            &claims,
-            &jsonwebtoken::EncodingKey::from_secret("test-secret".as_ref()),
-        )
-        .expect("expired bridge should encode");
+        });
 
         let err = resolve_sso_bridge_payload(
-            Some(expired_bridge),
+            Some(bridge),
             None,
             Some("binding-value".to_string()),
             "https://book.test",
-            "test-secret",
         )
         .expect_err("expired bridge should be rejected");
 
@@ -795,47 +804,86 @@ mod tests {
     #[test]
     fn sso_bridge_without_binding_cookie_is_rejected() {
         let binding = create_sso_bridge_binding();
-        let bridge = create_sso_bridge_token(
+        let bridge = create_sso_bridge_handle(
             "jwt-value",
             Some("/docs".to_string()),
             "https://book.test",
-            "test-secret",
             &binding,
         )
-        .expect("bridge should encode");
+        .expect("bridge should be stored");
 
-        let err = resolve_sso_bridge_payload(
-            Some(bridge),
-            None,
-            None,
-            "https://book.test",
-            "test-secret",
-        )
-        .expect_err("bridge replay without cookie should be rejected");
+        let err = resolve_sso_bridge_payload(Some(bridge), None, None, "https://book.test")
+            .expect_err("bridge replay without cookie should be rejected");
 
         assert_eq!(err, "missing or invalid bridge");
     }
 
     #[test]
     fn sso_bridge_with_wrong_binding_cookie_is_rejected() {
-        let bridge = create_sso_bridge_token(
+        let bridge = create_sso_bridge_handle(
             "jwt-value",
             Some("/docs".to_string()),
             "https://book.test",
-            "test-secret",
             "binding-value",
         )
-        .expect("bridge should encode");
+        .expect("bridge should be stored");
 
         let err = resolve_sso_bridge_payload(
             Some(bridge),
             None,
             Some("other-binding".to_string()),
             "https://book.test",
-            "test-secret",
         )
         .expect_err("bridge replay with another browser cookie should be rejected");
 
         assert_eq!(err, "missing or invalid bridge");
+    }
+
+    #[test]
+    fn sso_bridge_handle_payload_does_not_contain_raw_app_jwt() {
+        let binding = create_sso_bridge_binding();
+        let app_jwt = "header.payload.signature";
+        let bridge = create_sso_bridge_handle(
+            app_jwt,
+            Some("/docs".to_string()),
+            "https://book.test",
+            &binding,
+        )
+        .expect("bridge should be stored");
+
+        assert!(!bridge.contains(app_jwt));
+        assert!(bridge.split('.').count() < 3);
+        assert!(jsonwebtoken::decode::<serde_json::Value>(
+            &bridge,
+            &jsonwebtoken::DecodingKey::from_secret("test-secret".as_ref()),
+            &jsonwebtoken::Validation::default(),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn sso_bridge_handle_is_consumed_once() {
+        let binding = create_sso_bridge_binding();
+        let bridge = create_sso_bridge_handle(
+            "jwt-value",
+            Some("/docs".to_string()),
+            "https://book.test",
+            &binding,
+        )
+        .expect("bridge should be stored");
+
+        let payload = resolve_sso_bridge_payload(
+            Some(bridge.clone()),
+            None,
+            Some(binding.clone()),
+            "https://book.test",
+        )
+        .expect("first use should resolve");
+
+        assert_eq!(payload.token, "jwt-value");
+        assert!(
+            resolve_sso_bridge_payload(Some(bridge), None, Some(binding), "https://book.test",)
+                .is_err()
+        );
     }
 }
