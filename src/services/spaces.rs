@@ -1,11 +1,10 @@
-use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::models::space::{
-    CreateSpaceRequest, Space, SpaceDb, SpaceListQuery, SpaceListResponse, SpaceResponse, SpaceStats,
+    CreateSpaceRequest, Space, SpaceListQuery, SpaceListResponse, SpaceResponse, SpaceStats,
     UpdateSpaceRequest,
 };
 use crate::services::auth::User;
-use crate::services::database::{Database, record_id_key};
+use crate::services::database::{record_id_key, Database};
 use serde_json::Value;
 use std::sync::Arc;
 use surrealdb::types::RecordId as Thing;
@@ -70,10 +69,13 @@ impl SpaceService {
         }
 
         // 使用原生SQL创建，绕开封装 create(content) 在 SurrealDB 3 上的类型兼容问题。
+        // 创建结果只作为执行确认；随后用字符串投影查询新空间，避免 RecordId 反序列化差异导致 500。
         let create_sql = r#"
             CREATE space CONTENT {
                 name: $name,
                 slug: $slug,
+                description: $description,
+                avatar_url: $avatar_url,
                 is_public: $is_public,
                 is_deleted: false,
                 owner_id: $owner_id,
@@ -85,15 +87,17 @@ impl SpaceService {
                 updated_by: $updated_by,
                 created_at: time::now(),
                 updated_at: time::now()
-            } RETURN *;
+            };
         "#;
 
-        let mut response = self
+        let mut create_response = self
             .db
             .client
             .query(create_sql)
             .bind(("name", space.name.clone()))
             .bind(("slug", space.slug.clone()))
+            .bind(("description", space.description.clone()))
+            .bind(("avatar_url", space.avatar_url.clone()))
             .bind(("is_public", space.is_public))
             .bind(("owner_id", space.owner_id.clone()))
             .bind(("created_by", user.id.clone()))
@@ -104,14 +108,40 @@ impl SpaceService {
                 map_create_space_db_error(e)
             })?;
 
-        let created_spaces: Vec<SpaceDb> = response.take(0).map_err(|e| {
-            error!("Failed to decode created space: {}", e);
+        let _created: Value = create_response.take(0).map_err(|e| {
+            error!("Failed to decode create acknowledgement: {}", e);
             map_create_space_db_error(e)
         })?;
 
-        let created_space = created_spaces.into_iter().next().map(Space::from);
+        let mut response = self
+            .db
+            .client
+            .query(
+                "SELECT
+                    string::replace(type::string(id), 'space:', '') AS id,
+                    name, slug, description, avatar_url, is_public, is_deleted,
+                    (IF owner_id = NONE THEN '' ELSE type::string(owner_id) END) as owner_id,
+                    settings, theme_config, member_count, document_count,
+                    created_at, updated_at,
+                    (IF created_by = NONE THEN '' ELSE type::string(created_by) END) as created_by,
+                    (IF updated_by = NONE THEN '' ELSE type::string(updated_by) END) as updated_by
+                 FROM space
+                 WHERE slug = $slug AND is_deleted = false
+                 LIMIT 1",
+            )
+            .bind(("slug", request.slug.clone()))
+            .await
+            .map_err(|e| {
+                error!("Failed to fetch created space: {}", e);
+                map_create_space_db_error(e)
+            })?;
 
-        let created_space = created_space.ok_or_else(|| {
+        let created_spaces: Vec<Space> = response.take(0).map_err(|e| {
+            error!("Failed to decode fetched created space: {}", e);
+            map_create_space_db_error(e)
+        })?;
+
+        let created_space = created_spaces.into_iter().next().ok_or_else(|| {
             error!("Failed to get created space from database");
             AppError::Internal(anyhow::anyhow!("Failed to create space"))
         })?;
@@ -611,10 +641,10 @@ impl SpaceService {
 
     /// 检查slug是否已存在（全局检查）
     async fn slug_exists(&self, slug: &str) -> Result<bool> {
-        let existing: Option<surrealdb::types::RecordId> = self
+        let existing: Option<String> = self
             .db
             .client
-            .query("SELECT VALUE id FROM space WHERE slug = $slug AND is_deleted = false LIMIT 1")
+            .query("SELECT VALUE type::string(id) FROM space WHERE slug = $slug AND is_deleted = false LIMIT 1")
             .bind(("slug", slug))
             .await
             .map_err(|e| AppError::Database(e))?
