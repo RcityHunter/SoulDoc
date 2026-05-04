@@ -18,6 +18,17 @@ impl FlexibleRecordId {
             FlexibleRecordId::String(value) => value,
         }
     }
+
+    pub fn into_key_string(self) -> String {
+        match self {
+            FlexibleRecordId::RecordId(thing) => record_id_key(&thing),
+            FlexibleRecordId::String(value) => value
+                .strip_prefix("space:")
+                .or_else(|| value.strip_prefix("space_invitation:"))
+                .unwrap_or(&value)
+                .to_string(),
+        }
+    }
 }
 
 // 用于从数据库读取的内部结构
@@ -171,7 +182,7 @@ pub struct SpaceMemberResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpaceInvitationDb {
     pub id: Option<FlexibleRecordId>,
-    pub space_id: Thing,
+    pub space_id: FlexibleRecordId,
     pub email: Option<String>,
     pub user_id: Option<String>,
     pub invite_token: String,
@@ -249,7 +260,7 @@ impl From<SpaceInvitationDb> for SpaceInvitation {
     fn from(db: SpaceInvitationDb) -> Self {
         Self {
             id: db.id.map(FlexibleRecordId::into_string),
-            space_id: record_id_key(&db.space_id),
+            space_id: db.space_id.into_key_string(),
             email: db.email,
             user_id: db.user_id,
             invite_token: db.invite_token,
@@ -276,5 +287,12 @@ mod tests {
             serde_json::from_str(r#""space_invitation:sa5phk80ljowxr2b14ao""#).unwrap();
 
         assert_eq!(id.into_string(), "space_invitation:sa5phk80ljowxr2b14ao");
+    }
+
+    #[test]
+    fn flexible_record_id_extracts_space_key_from_string_record_ids() {
+        let id: FlexibleRecordId = serde_json::from_str(r#""space:rc3z5qyduqu824o32szx""#).unwrap();
+
+        assert_eq!(id.into_key_string(), "rc3z5qyduqu824o32szx");
     }
 }

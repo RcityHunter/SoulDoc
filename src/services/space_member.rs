@@ -509,9 +509,11 @@ impl SpaceMemberService {
             ));
         }
 
+        let invitation_space_id = invitation.space_id.clone().into_key_string();
+
         // 检查是否已经是成员
         if self
-            .can_access_space(&record_id_key(&invitation.space_id), Some(user_id))
+            .can_access_space(&invitation_space_id, Some(user_id))
             .await?
         {
             return Err(AppError::Conflict(
@@ -536,7 +538,7 @@ impl SpaceMemberService {
         "#;
 
         // 提取纯净的space_id和user_id，避免嵌套Thing
-        let raw_space_id = record_id_key(&invitation.space_id);
+        let raw_space_id = invitation_space_id.clone();
         info!("Raw space_id from invitation: {}", raw_space_id);
 
         // 处理可能的嵌套Thing格式 space:⟨⟨space:xxxxx⟩⟩
@@ -628,8 +630,7 @@ impl SpaceMemberService {
 
         info!(
             "User {} accepted invitation to space {}",
-            user_id,
-            record_id_key(&invitation.space_id)
+            user_id, invitation_space_id
         );
 
         Ok(created_member.into())
