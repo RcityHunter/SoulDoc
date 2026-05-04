@@ -68,14 +68,15 @@ impl SpaceService {
             space.settings = settings;
         }
 
+        let optional_fields = create_space_optional_fields(&space.description, &space.avatar_url);
+
         // 使用原生SQL创建，绕开封装 create(content) 在 SurrealDB 3 上的类型兼容问题。
         // 创建结果只作为执行确认；随后用字符串投影查询新空间，避免 RecordId 反序列化差异导致 500。
         let create_sql = r#"
             CREATE space CONTENT {
                 name: $name,
                 slug: $slug,
-                description: $description,
-                avatar_url: $avatar_url,
+                __OPTIONAL_FIELDS__
                 is_public: $is_public,
                 is_deleted: false,
                 owner_id: $owner_id,
@@ -88,25 +89,31 @@ impl SpaceService {
                 created_at: time::now(),
                 updated_at: time::now()
             };
-        "#;
+        "#
+        .replace("__OPTIONAL_FIELDS__", &optional_fields);
 
-        let mut create_response = self
+        let mut create_query = self
             .db
             .client
             .query(create_sql)
             .bind(("name", space.name.clone()))
             .bind(("slug", space.slug.clone()))
-            .bind(("description", space.description.clone()))
-            .bind(("avatar_url", space.avatar_url.clone()))
             .bind(("is_public", space.is_public))
             .bind(("owner_id", space.owner_id.clone()))
             .bind(("created_by", user.id.clone()))
-            .bind(("updated_by", user.id.clone()))
-            .await
-            .map_err(|e| {
-                error!("Failed to create space: {}", e);
-                map_create_space_db_error(e)
-            })?;
+            .bind(("updated_by", user.id.clone()));
+
+        if let Some(description) = &space.description {
+            create_query = create_query.bind(("description", description.clone()));
+        }
+        if let Some(avatar_url) = &space.avatar_url {
+            create_query = create_query.bind(("avatar_url", avatar_url.clone()));
+        }
+
+        let mut create_response = create_query.await.map_err(|e| {
+            error!("Failed to create space: {}", e);
+            map_create_space_db_error(e)
+        })?;
 
         let _created: Value = create_response.take(0).map_err(|e| {
             error!("Failed to decode create acknowledgement: {}", e);
@@ -897,6 +904,20 @@ fn sanitize_slug_for_query(slug: &str) -> Result<String> {
     ))
 }
 
+fn create_space_optional_fields(
+    description: &Option<String>,
+    avatar_url: &Option<String>,
+) -> String {
+    let mut fields = Vec::new();
+    if description.is_some() {
+        fields.push("description: $description,");
+    }
+    if avatar_url.is_some() {
+        fields.push("avatar_url: $avatar_url,");
+    }
+    fields.join("\n                ")
+}
+
 fn sanitize_space_id_for_query(id: &str) -> Result<String> {
     let clean = id
         .strip_prefix("space:")
@@ -958,5 +979,20 @@ mod tests {
         };
 
         assert!(invalid_request.validate().is_err());
+    }
+
+    #[test]
+    fn test_create_space_optional_fields_omit_none_values() {
+        let fields = create_space_optional_fields(&None, &None);
+        assert!(!fields.contains("description: $description"));
+        assert!(!fields.contains("avatar_url: $avatar_url"));
+
+        let fields = create_space_optional_fields(&Some("desc".to_string()), &None);
+        assert!(fields.contains("description: $description"));
+        assert!(!fields.contains("avatar_url: $avatar_url"));
+
+        let fields = create_space_optional_fields(&None, &Some("avatar".to_string()));
+        assert!(!fields.contains("description: $description"));
+        assert!(fields.contains("avatar_url: $avatar_url"));
     }
 }
