@@ -593,6 +593,13 @@ impl SpaceMemberService {
 
         // 更新邀请使用次数 - 使用简单的更新方法
         if let Some(invitation_id) = &invitation.id {
+            let invitation_record_id = invitation_id
+                .clone()
+                .into_string()
+                .strip_prefix("space_invitation:")
+                .map(str::to_string)
+                .unwrap_or_else(|| invitation_id.clone().into_string());
+
             let update_query = r#"
                 UPDATE $invitation_id SET
                     used_count = used_count + 1,
@@ -605,7 +612,7 @@ impl SpaceMemberService {
                 .query(update_query)
                 .bind((
                     "invitation_id",
-                    Thing::new("space_invitation", record_id_key(invitation_id)),
+                    Thing::new("space_invitation", invitation_record_id),
                 ))
                 .await
                 .map_err(|e| {

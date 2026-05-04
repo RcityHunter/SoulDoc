@@ -4,6 +4,22 @@ use serde::{Deserialize, Serialize};
 use surrealdb::types::RecordId as Thing;
 use validator::Validate;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum FlexibleRecordId {
+    RecordId(Thing),
+    String(String),
+}
+
+impl FlexibleRecordId {
+    pub fn into_string(self) -> String {
+        match self {
+            FlexibleRecordId::RecordId(thing) => record_id_to_string(&thing),
+            FlexibleRecordId::String(value) => value,
+        }
+    }
+}
+
 // 用于从数据库读取的内部结构
 #[derive(Debug, Clone, Deserialize)]
 pub struct SpaceMemberDb {
@@ -154,7 +170,7 @@ pub struct SpaceMemberResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpaceInvitationDb {
-    pub id: Option<Thing>,
+    pub id: Option<FlexibleRecordId>,
     pub space_id: Thing,
     pub email: Option<String>,
     pub user_id: Option<String>,
@@ -232,7 +248,7 @@ impl From<SpaceMember> for SpaceMemberResponse {
 impl From<SpaceInvitationDb> for SpaceInvitation {
     fn from(db: SpaceInvitationDb) -> Self {
         Self {
-            id: db.id.map(|thing| record_id_to_string(&thing)),
+            id: db.id.map(FlexibleRecordId::into_string),
             space_id: record_id_key(&db.space_id),
             email: db.email,
             user_id: db.user_id,
@@ -247,5 +263,18 @@ impl From<SpaceInvitationDb> for SpaceInvitation {
             created_at: db.created_at,
             updated_at: db.updated_at,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FlexibleRecordId;
+
+    #[test]
+    fn flexible_record_id_accepts_string_record_ids() {
+        let id: FlexibleRecordId =
+            serde_json::from_str(r#""space_invitation:sa5phk80ljowxr2b14ao""#).unwrap();
+
+        assert_eq!(id.into_string(), "space_invitation:sa5phk80ljowxr2b14ao");
     }
 }
