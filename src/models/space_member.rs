@@ -34,8 +34,8 @@ impl FlexibleRecordId {
 // 用于从数据库读取的内部结构
 #[derive(Debug, Clone, Deserialize)]
 pub struct SpaceMemberDb {
-    pub id: Option<Thing>,
-    pub space_id: Thing,
+    pub id: Option<FlexibleRecordId>,
+    pub space_id: FlexibleRecordId,
     pub user_id: String,
     pub role: MemberRole,
     pub permissions: Vec<String>,
@@ -223,8 +223,8 @@ pub struct AcceptInvitationRequest {
 impl From<SpaceMemberDb> for SpaceMember {
     fn from(db: SpaceMemberDb) -> Self {
         Self {
-            id: db.id.map(|thing| record_id_to_string(&thing)),
-            space_id: record_id_key(&db.space_id),
+            id: db.id.map(FlexibleRecordId::into_string),
+            space_id: db.space_id.into_key_string(),
             user_id: db.user_id,
             role: db.role,
             permissions: db.permissions,
@@ -279,7 +279,7 @@ impl From<SpaceInvitationDb> for SpaceInvitation {
 
 #[cfg(test)]
 mod tests {
-    use super::FlexibleRecordId;
+    use super::{FlexibleRecordId, SpaceMemberDb};
 
     #[test]
     fn flexible_record_id_accepts_string_record_ids() {
@@ -294,5 +294,32 @@ mod tests {
         let id: FlexibleRecordId = serde_json::from_str(r#""space:rc3z5qyduqu824o32szx""#).unwrap();
 
         assert_eq!(id.into_key_string(), "rc3z5qyduqu824o32szx");
+    }
+
+    #[test]
+    fn space_member_db_accepts_string_record_ids() {
+        let member: SpaceMemberDb = serde_json::from_str(
+            r#"{
+                "id": "space_member:nzouor8ufw8pq4y0m7k1",
+                "space_id": "space:l3nwpln0g5qb5ylqbleb",
+                "user_id": "c0dac85c-ca31-4ee8-8d25-e6daf71972ac",
+                "role": "editor",
+                "permissions": ["docs.read", "docs.write"],
+                "invited_by": "58eea1fc-ef39-4adb-a83b-b2886bf80467",
+                "invited_at": "2026-05-04T09:44:48Z",
+                "accepted_at": "2026-05-04T09:44:48Z",
+                "status": "accepted",
+                "expires_at": null,
+                "created_at": "2026-05-04T09:44:48Z",
+                "updated_at": "2026-05-04T09:44:48Z"
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            member.id.unwrap().into_string(),
+            "space_member:nzouor8ufw8pq4y0m7k1"
+        );
+        assert_eq!(member.space_id.into_key_string(), "l3nwpln0g5qb5ylqbleb");
     }
 }

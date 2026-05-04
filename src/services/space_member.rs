@@ -5,7 +5,7 @@ use crate::models::space_member::{
     SpaceInvitationDb, SpaceMember, SpaceMemberDb, SpaceMemberResponse, UpdateMemberRequest,
 };
 use crate::services::auth::User;
-use crate::services::database::{record_id_key, Database};
+use crate::services::database::Database;
 use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;
@@ -962,7 +962,7 @@ impl SpaceMemberService {
 
         let space_ids = members
             .into_iter()
-            .map(|member| record_id_key(&member.space_id))
+            .map(|member| member.space_id.into_key_string())
             .collect();
 
         Ok(space_ids)
