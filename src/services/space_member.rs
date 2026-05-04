@@ -5,7 +5,7 @@ use crate::models::space_member::{
     SpaceInvitationDb, SpaceMember, SpaceMemberDb, SpaceMemberResponse, UpdateMemberRequest,
 };
 use crate::services::auth::User;
-use crate::services::database::{Database, record_id_key};
+use crate::services::database::{record_id_key, Database};
 use chrono::Utc;
 use std::sync::Arc;
 use surrealdb::types::RecordId as Thing;
@@ -55,6 +55,11 @@ fn space_id_match_candidates(space_id: &str) -> Vec<String> {
     ]
 }
 
+fn space_owner_where_clause() -> &'static str {
+    "type::string(id) IN [$space_id_plain, $space_id_bracketed, $space_id_prefixed, $space_id_nested]
+              AND (IF owner_id = NONE THEN '' ELSE type::string(owner_id) END) IN [$user_id_bracketed, $user_id_plain, $user_id_raw]"
+}
+
 pub struct SpaceMemberService {
     db: Arc<Database>,
     config: Config,
@@ -78,7 +83,6 @@ impl SpaceMemberService {
             clean_user_id, uid
         );
 
-        let actual_space_id = normalize_space_id(space_id);
         let space_id_candidates = space_id_match_candidates(space_id);
         let space_id_plain = space_id_candidates[0].clone();
         let space_id_bracketed = space_id_candidates[1].clone();
@@ -88,18 +92,23 @@ impl SpaceMemberService {
         // 检查是否为空间所有者（数据库内比较，避免反序列化形态差异）
         let user_id_bracketed = format!("user:⟨{}⟩", clean_user_id);
         let user_id_plain = format!("user:{}", clean_user_id);
-        let owner_query = r#"
+        let owner_query = format!(
+            r#"
             SELECT count() AS count
             FROM space
-            WHERE id = $space_id
-              AND (IF owner_id = NONE THEN '' ELSE type::string(owner_id) END) IN [$user_id_bracketed, $user_id_plain, $user_id_raw]
+            WHERE {}
             GROUP ALL
-        "#;
+        "#,
+            space_owner_where_clause()
+        );
         let owner_count: Vec<serde_json::Value> = self
             .db
             .client
             .query(owner_query)
-            .bind(("space_id", Thing::new("space", actual_space_id)))
+            .bind(("space_id_plain", space_id_plain.clone()))
+            .bind(("space_id_bracketed", space_id_bracketed.clone()))
+            .bind(("space_id_prefixed", space_id_prefixed.clone()))
+            .bind(("space_id_nested", space_id_nested.clone()))
             .bind(("user_id_bracketed", user_id_bracketed.clone()))
             .bind(("user_id_plain", user_id_plain.clone()))
             .bind(("user_id_raw", clean_user_id.clone()))
@@ -181,18 +190,23 @@ impl SpaceMemberService {
         let user_id_plain = format!("user:{}", clean_user_id);
 
         // 先检查是否为空间所有者（数据库内比较）
-        let owner_query = r#"
+        let owner_query = format!(
+            r#"
             SELECT count() AS count
             FROM space
-            WHERE id = $space_id
-              AND (IF owner_id = NONE THEN '' ELSE type::string(owner_id) END) IN [$user_id_bracketed, $user_id_plain, $user_id_raw]
+            WHERE {}
             GROUP ALL
-        "#;
+        "#,
+            space_owner_where_clause()
+        );
         let owner_count: Vec<serde_json::Value> = self
             .db
             .client
             .query(owner_query)
-            .bind(("space_id", Thing::new("space", actual_space_id)))
+            .bind(("space_id_plain", space_id_plain.clone()))
+            .bind(("space_id_bracketed", space_id_bracketed.clone()))
+            .bind(("space_id_prefixed", space_id_prefixed.clone()))
+            .bind(("space_id_nested", space_id_nested.clone()))
             .bind(("user_id_bracketed", user_id_bracketed.clone()))
             .bind(("user_id_plain", user_id_plain.clone()))
             .bind(("user_id_raw", clean_user_id.clone()))
@@ -1003,7 +1017,7 @@ impl SpaceMemberService {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_space_id, space_id_match_candidates};
+    use super::{normalize_space_id, space_id_match_candidates, space_owner_where_clause};
 
     #[test]
     fn normalizes_nested_space_record_shapes() {
@@ -1024,5 +1038,16 @@ mod tests {
                 "space:⟨⟨space:test⟩⟩".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn owner_lookup_matches_space_id_string_shapes() {
+        let clause = space_owner_where_clause();
+        assert!(clause.contains("type::string(id) IN"));
+        assert!(clause.contains("$space_id_plain"));
+        assert!(clause.contains("$space_id_bracketed"));
+        assert!(clause.contains("$space_id_prefixed"));
+        assert!(clause.contains("$space_id_nested"));
+        assert!(!clause.contains("id = $space_id"));
     }
 }
