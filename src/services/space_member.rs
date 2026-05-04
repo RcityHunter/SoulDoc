@@ -90,6 +90,28 @@ fn local_user_id_from_lookup_row(row: &Value) -> Option<String> {
         .filter(|id| !id.is_empty())
 }
 
+fn inviter_display_name_from_local_user(row: &Value) -> Option<String> {
+    row.get("username")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            row.get("email")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty() && *value != "unknown@example.com")
+                .map(ToString::to_string)
+        })
+}
+
+fn space_name_lookup_query() -> &'static str {
+    "SELECT name FROM space
+     WHERE type::string(id) = $space_id_prefixed
+        OR string::replace(type::string(id), 'space:', '') = $space_id
+     LIMIT 1"
+}
+
 pub struct SpaceMemberService {
     db: Arc<Database>,
     config: Config,
@@ -440,22 +462,7 @@ impl SpaceMemberService {
             space_id
         );
 
-        // 获取邀请者显示名称，优先使用profile中的名称，否则使用用户ID
-        let inviter_name = inviter
-            .profile
-            .as_ref()
-            .and_then(|p| p.display_name.clone())
-            .filter(|name| !name.is_empty())
-            .or_else(|| {
-                // 如果email不是默认的unknown@example.com，则使用email
-                if inviter.email != "unknown@example.com" {
-                    Some(inviter.email.clone())
-                } else {
-                    // 否则使用用户ID
-                    Some(inviter.id.clone())
-                }
-            })
-            .unwrap_or_else(|| inviter.id.clone());
+        let inviter_name = self.resolve_inviter_display_name(inviter).await;
 
         info!(
             "Inviter info - ID: {}, Email: {}, Display name: {}",
@@ -540,6 +547,71 @@ impl SpaceMemberService {
         }
 
         Ok(user_id)
+    }
+
+    async fn resolve_inviter_display_name(&self, inviter: &User) -> String {
+        if let Some(name) = inviter
+            .profile
+            .as_ref()
+            .and_then(|profile| profile.display_name.as_deref())
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            return name.to_string();
+        }
+
+        if inviter.email != "unknown@example.com" && !inviter.email.trim().is_empty() {
+            return inviter.email.clone();
+        }
+
+        match self.find_local_user_display_name(&inviter.id).await {
+            Ok(Some(name)) => name,
+            Ok(None) => inviter.id.clone(),
+            Err(e) => {
+                error!(
+                    "Failed to resolve inviter display name for {}: {}",
+                    inviter.id, e
+                );
+                inviter.id.clone()
+            }
+        }
+    }
+
+    async fn find_local_user_display_name(&self, user_id: &str) -> Result<Option<String>> {
+        let clean_user_id = clean_user_id_format(user_id);
+        if clean_user_id.is_empty() {
+            return Ok(None);
+        }
+
+        let mut result = self
+            .db
+            .client
+            .query(
+                "SELECT username, email FROM local_user
+                 WHERE type::string(id) = $local_user_prefixed
+                    OR string::replace(type::string(id), 'local_user:', '') = $local_user_id
+                 LIMIT 1",
+            )
+            .bind(("local_user_id", clean_user_id.clone()))
+            .bind(("local_user_prefixed", format!("local_user:{}", clean_user_id)))
+            .await
+            .map_err(|e| {
+                error!(
+                    "Failed to look up local_user display name for {}: {}",
+                    clean_user_id, e
+                );
+                AppError::Database(e)
+            })?;
+
+        let users: Vec<Value> = result.take(0).map_err(|e| {
+            error!(
+                "Failed to parse local_user display name lookup for {}: {}",
+                clean_user_id, e
+            );
+            AppError::Database(e.into())
+        })?;
+
+        Ok(users.first().and_then(inviter_display_name_from_local_user))
     }
 
     /// 接受邀请
@@ -949,12 +1021,12 @@ impl SpaceMemberService {
             space_id
         };
 
-        let query = "SELECT name FROM space WHERE id = $space_id";
         let mut response = self
             .db
             .client
-            .query(query)
-            .bind(("space_id", Thing::new("space", actual_space_id)))
+            .query(space_name_lookup_query())
+            .bind(("space_id", actual_space_id.to_string()))
+            .bind(("space_id_prefixed", format!("space:{}", actual_space_id)))
             .await
             .map_err(|e| {
                 error!("Failed to get space name for {}: {}", space_id, e);
@@ -1127,8 +1199,9 @@ impl SpaceMemberService {
 #[cfg(test)]
 mod tests {
     use super::{
-        invitation_optional_assignments, local_user_id_from_lookup_row, normalize_space_id,
-        space_id_match_candidates, space_owner_where_clause,
+        invitation_optional_assignments, inviter_display_name_from_local_user,
+        local_user_id_from_lookup_row, normalize_space_id, space_id_match_candidates,
+        space_name_lookup_query, space_owner_where_clause,
     };
     use crate::models::space_member::{InviteMemberRequest, MemberRole};
     use serde_json::json;
@@ -1192,5 +1265,31 @@ mod tests {
             Some("abc-123".to_string())
         );
         assert_eq!(local_user_id_from_lookup_row(&json!({ "id": "" })), None);
+    }
+
+    #[test]
+    fn inviter_display_name_prefers_local_username_then_email() {
+        assert_eq!(
+            inviter_display_name_from_local_user(&json!({
+                "username": "Trantor Labs",
+                "email": "owner@example.com"
+            })),
+            Some("Trantor Labs".to_string())
+        );
+        assert_eq!(
+            inviter_display_name_from_local_user(&json!({
+                "username": "",
+                "email": "owner@example.com"
+            })),
+            Some("owner@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn space_name_lookup_matches_projected_record_id_strings() {
+        let query = space_name_lookup_query();
+
+        assert!(query.contains("type::string(id) = $space_id_prefixed"));
+        assert!(query.contains("string::replace(type::string(id), 'space:', '') = $space_id"));
     }
 }
