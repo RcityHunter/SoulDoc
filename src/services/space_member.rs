@@ -60,6 +60,22 @@ fn space_owner_where_clause() -> &'static str {
               AND (IF owner_id = NONE THEN '' ELSE type::string(owner_id) END) IN [$user_id_bracketed, $user_id_plain, $user_id_raw]"
 }
 
+fn invitation_optional_assignments(request: &InviteMemberRequest) -> String {
+    let mut assignments = String::new();
+
+    if request.email.is_some() {
+        assignments.push_str(",\n                email = $email");
+    }
+    if request.user_id.is_some() {
+        assignments.push_str(",\n                user_id = $user_id");
+    }
+    if request.message.is_some() {
+        assignments.push_str(",\n                message = $message");
+    }
+
+    assignments
+}
+
 pub struct SpaceMemberService {
     db: Arc<Database>,
     config: Config,
@@ -348,39 +364,49 @@ impl SpaceMemberService {
             clean_space_id
         );
 
-        // 使用 SQL 查询创建邀请记录，使用 SurrealDB 的时间函数和 duration 语法
+        let optional_assignments = invitation_optional_assignments(&request);
+
+        // 使用 SQL 查询创建邀请记录，避免把空可选字段写成 SurrealDB 不接受的 NULL
         let query = format!(
             r#"
             CREATE space_invitation SET
-                space_id = type::record($space_id),
-                email = $email,
-                user_id = $user_id,
+                space_id = type::record($space_id){},
                 invite_token = $invite_token,
                 role = $role,
                 permissions = $permissions,
                 invited_by = $invited_by,
-                message = $message,
                 max_uses = $max_uses,
                 used_count = $used_count,
-                expires_at = time::now() + {}d
+                expires_at = time::now() + {}d,
+                created_at = time::now(),
+                updated_at = time::now()
         "#,
-            expires_in_days
+            optional_assignments, expires_in_days
         );
 
-        let created: Vec<SpaceInvitationDb> = self
+        let mut create_query = self
             .db
             .client
             .query(query)
             .bind(("space_id", format!("space:{}", clean_space_id)))
-            .bind(("email", request.email.clone()))
-            .bind(("user_id", request.user_id.clone()))
             .bind(("invite_token", invite_token.clone()))
             .bind(("role", request.role.clone()))
             .bind(("permissions", request.role.default_permissions()))
             .bind(("invited_by", inviter.id.clone()))
-            .bind(("message", request.message.clone()))
             .bind(("max_uses", 1))
-            .bind(("used_count", 0))
+            .bind(("used_count", 0));
+
+        if let Some(email) = &request.email {
+            create_query = create_query.bind(("email", email.clone()));
+        }
+        if let Some(user_id) = &request.user_id {
+            create_query = create_query.bind(("user_id", user_id.clone()));
+        }
+        if let Some(message) = &request.message {
+            create_query = create_query.bind(("message", message.clone()));
+        }
+
+        let created: Vec<SpaceInvitationDb> = create_query
             .await
             .map_err(|e| AppError::Database(e))?
             .take(0)?;
@@ -1017,7 +1043,11 @@ impl SpaceMemberService {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_space_id, space_id_match_candidates, space_owner_where_clause};
+    use super::{
+        invitation_optional_assignments, normalize_space_id, space_id_match_candidates,
+        space_owner_where_clause,
+    };
+    use crate::models::space_member::{InviteMemberRequest, MemberRole};
 
     #[test]
     fn normalizes_nested_space_record_shapes() {
@@ -1049,5 +1079,21 @@ mod tests {
         assert!(clause.contains("$space_id_prefixed"));
         assert!(clause.contains("$space_id_nested"));
         assert!(!clause.contains("id = $space_id"));
+    }
+
+    #[test]
+    fn invitation_create_omits_empty_optional_fields() {
+        let request = InviteMemberRequest {
+            email: None,
+            user_id: Some("user-1".to_string()),
+            role: MemberRole::Viewer,
+            message: None,
+            expires_in_days: None,
+        };
+
+        let assignments = invitation_optional_assignments(&request);
+        assert!(!assignments.contains("email = $email"));
+        assert!(assignments.contains("user_id = $user_id"));
+        assert!(!assignments.contains("message = $message"));
     }
 }
