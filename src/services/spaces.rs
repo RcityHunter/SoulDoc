@@ -267,12 +267,11 @@ impl SpaceService {
             .map_err(|e| AppError::Database(e))?
             .take(0)?;
 
-        let total = count_result
+        let owner_total = count_result
             .first()
             .and_then(|v| v.get("total"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
-        let total_pages = (total + limit - 1) / limit;
 
         // 查询数据（将 id 转为字符串，避免 Thing 反序列化问题）
         let data_query = format!(
@@ -311,15 +310,21 @@ impl SpaceService {
                 user.id
             );
 
-            // 合并空间，避免重复
-            let existing_ids: std::collections::HashSet<String> =
-                spaces.iter().filter_map(|s| s.id.clone()).collect();
+            // 合并空间，避免重复。成员空间查询在部分 SurrealDB 返回形态下可能没有投影出 id，
+            // 不能因此把已查询到的成员空间丢掉。
+            let mut existing_keys: std::collections::HashSet<String> =
+                spaces.iter().filter_map(space_identity_key).collect();
 
             for member_space in member_spaces {
-                if let Some(space_id) = &member_space.id {
-                    if !existing_ids.contains(space_id) {
+                if let Some(key) = space_identity_key(&member_space) {
+                    if existing_keys.insert(key) {
                         spaces.push(member_space);
                     }
+                } else {
+                    warn!(
+                        "Member space has no usable id or slug; including it to avoid hiding accessible space"
+                    );
+                    spaces.push(member_space);
                 }
             }
         }
@@ -340,6 +345,14 @@ impl SpaceService {
             space_responses.len(),
             user.map(|u| &u.id)
         );
+
+        let visible_total = space_responses.len() as u32;
+        let total = owner_total.max(visible_total);
+        let total_pages = if total == 0 {
+            0
+        } else {
+            (total + limit - 1) / limit
+        };
 
         Ok(SpaceListResponse {
             spaces: space_responses,
@@ -912,6 +925,19 @@ fn member_space_lookup_where_clause() -> &'static str {
     "(type::string(id) = $space_id OR string::replace(type::string(id), 'space:', '') = $space_key OR slug = $space_key)"
 }
 
+fn space_identity_key(space: &Space) -> Option<String> {
+    if let Some(id) = space.id.as_ref().map(|id| id.trim()).filter(|id| !id.is_empty()) {
+        return Some(format!("id:{id}"));
+    }
+
+    let slug = space.slug.trim();
+    if !slug.is_empty() {
+        return Some(format!("slug:{slug}"));
+    }
+
+    None
+}
+
 fn member_space_lookup_key(space_id: &str) -> String {
     let mut clean = space_id
         .trim()
@@ -1039,5 +1065,18 @@ mod tests {
         assert_eq!(member_space_lookup_key("⟨space:asd⟩"), "asd");
         assert_eq!(member_space_lookup_key("space:⟨space:asd⟩"), "asd");
         assert_eq!(member_space_lookup_key("space:⟨⟨space:asd⟩⟩"), "asd");
+    }
+
+    #[test]
+    fn space_identity_key_falls_back_to_slug_when_id_missing() {
+        let mut space = Space::new("514".to_string(), "514".to_string(), "owner".to_string());
+
+        assert_eq!(space_identity_key(&space), Some("slug:514".to_string()));
+
+        space.id = Some(String::new());
+        assert_eq!(space_identity_key(&space), Some("slug:514".to_string()));
+
+        space.id = Some("space-id".to_string());
+        assert_eq!(space_identity_key(&space), Some("id:space-id".to_string()));
     }
 }
