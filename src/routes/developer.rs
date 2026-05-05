@@ -124,8 +124,15 @@ async fn delete_api_key(
 ) -> Result<Json<Value>> {
     let db = &app_state.db.client;
     let now = chrono::Utc::now().to_rfc3339();
-    db.query("UPDATE $id SET is_deleted = true, updated_at = $now WHERE created_by = $uid")
-        .bind(("id", format!("api_key:{}", id)))
+    let key_id = normalize_api_key_id(&id);
+    db.query(
+        "UPDATE api_key
+         SET is_deleted = true, updated_at = $now
+         WHERE (type::string(id) = $record_id OR string::replace(type::string(id), 'api_key:', '') = $key_id)
+           AND created_by = $uid",
+    )
+        .bind(("record_id", format!("api_key:{}", key_id)))
+        .bind(("key_id", key_id))
         .bind(("uid", &user.id))
         .bind(("now", &now))
         .await
@@ -523,6 +530,10 @@ fn sha256_hex(input: &str) -> String {
     format!("{:x}", digest)
 }
 
+fn normalize_api_key_id(id: &str) -> &str {
+    id.strip_prefix("api_key:").unwrap_or(id)
+}
+
 fn agent_requests_payload(items: Vec<Value>, can_manage: bool) -> Value {
     json!({
         "success": true,
@@ -544,5 +555,11 @@ mod tests {
         assert_eq!(payload["success"], true);
         assert_eq!(payload["data"]["can_manage"], false);
         assert_eq!(payload["data"]["items"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn normalize_api_key_id_accepts_raw_or_record_id() {
+        assert_eq!(normalize_api_key_id("abc123"), "abc123");
+        assert_eq!(normalize_api_key_id("api_key:abc123"), "abc123");
     }
 }
