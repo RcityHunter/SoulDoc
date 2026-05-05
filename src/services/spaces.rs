@@ -7,7 +7,6 @@ use crate::services::auth::User;
 use crate::services::database::Database;
 use serde_json::Value;
 use std::sync::Arc;
-use surrealdb::types::RecordId as Thing;
 use tracing::{debug, error, info, warn};
 use validator::Validate;
 
@@ -810,7 +809,7 @@ impl SpaceService {
                 .db
                 .client
                 .query(&member_space_query)
-                .bind(("space_id", Thing::new("space", space_key.as_str())))
+                .bind(("space_id", format!("space:{}", space_key)))
                 .bind(("space_key", space_key))
                 .await
                 .map_err(|e| {
@@ -906,7 +905,7 @@ fn member_space_ids_query() -> &'static str {
 }
 
 fn member_space_lookup_where_clause() -> &'static str {
-    "(id = $space_id OR slug = $space_key)"
+    "(type::string(id) = $space_id OR string::replace(type::string(id), 'space:', '') = $space_key OR slug = $space_key)"
 }
 
 fn member_space_lookup_key(space_id: &str) -> String {
@@ -1009,7 +1008,8 @@ mod tests {
     fn member_space_lookup_matches_record_id_or_slug() {
         let clause = member_space_lookup_where_clause();
 
-        assert!(clause.contains("id = $space_id"));
+        assert!(clause.contains("type::string(id) = $space_id"));
+        assert!(clause.contains("string::replace(type::string(id), 'space:', '') = $space_key"));
         assert!(clause.contains("slug = $space_key"));
     }
 
