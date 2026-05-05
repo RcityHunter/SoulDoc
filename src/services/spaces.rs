@@ -793,6 +793,7 @@ impl SpaceService {
         // 查询对应的space记录
         let mut spaces = Vec::new();
         for space_id in space_ids {
+            let space_key = member_space_lookup_key(&space_id);
             let member_space_query = "SELECT
                         string::replace(type::string(id), 'space:', '') AS id,
                         name, slug, description, avatar_url, is_public, is_deleted,
@@ -809,8 +810,8 @@ impl SpaceService {
                 .db
                 .client
                 .query(&member_space_query)
-                .bind(("space_id", Thing::new("space", space_id.as_str())))
-                .bind(("space_key", space_id.clone()))
+                .bind(("space_id", Thing::new("space", space_key.as_str())))
+                .bind(("space_key", space_key))
                 .await
                 .map_err(|e| {
                     error!("Failed to query space: {}", e);
@@ -908,6 +909,15 @@ fn member_space_lookup_where_clause() -> &'static str {
     "(id = $space_id OR slug = $space_key)"
 }
 
+fn member_space_lookup_key(space_id: &str) -> String {
+    space_id
+        .trim()
+        .strip_prefix("space:")
+        .unwrap_or(space_id.trim())
+        .trim_matches(|c| c == '⟨' || c == '⟩')
+        .to_string()
+}
+
 fn sanitize_space_id_for_query(id: &str) -> Result<String> {
     let clean = id
         .strip_prefix("space:")
@@ -1001,5 +1011,12 @@ mod tests {
 
         assert!(clause.contains("id = $space_id"));
         assert!(clause.contains("slug = $space_key"));
+    }
+
+    #[test]
+    fn member_space_key_strips_record_wrappers_before_lookup() {
+        assert_eq!(member_space_lookup_key("space:⟨asd⟩"), "asd");
+        assert_eq!(member_space_lookup_key("⟨asd⟩"), "asd");
+        assert_eq!(member_space_lookup_key("space:asd"), "asd");
     }
 }
